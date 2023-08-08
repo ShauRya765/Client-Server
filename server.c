@@ -408,9 +408,6 @@ int main(int argc, char *argv[]) {
             continue;
         } else if (child_pid == 0) {
             // Child process
-//            close(server_socket);
-//            processclient(client_socket);
-//            close(client_socket);
             while (1) {
                 printf("Message from the client\n");
                 char buff1[1024];
@@ -421,7 +418,12 @@ int main(int argc, char *argv[]) {
                 printf("%s", buff1);
                 char buff[1024];
                 printf("\nType your message to the client\n");
-                scanf("%s", buff);
+                fgets(buff, sizeof(buff), stdin);
+                // Remove the newline character from the end of the input
+                size_t input_length = strlen(buff);
+                if (input_length > 0 && buff[input_length - 1] == '\n') {
+                    buff[input_length - 1] = '\0';
+                }
                 write(client_socket, buff, 1024);
             }
         } else {

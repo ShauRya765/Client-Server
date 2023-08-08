@@ -47,23 +47,26 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         // Read command from the user
-        char buff1[1024];
-        printf("\nType your message to the server\n");
-        scanf("%s", buff1);
-        if (strcmp(buff1, "quit") == 0) {
+        char cmdArr[1024];
+        printf("\nEnter Command:\n");
+        fgets(cmdArr, sizeof(cmdArr), stdin);
+        // Remove the newline character from the end of the input
+        size_t input_length = strlen(cmdArr);
+        if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
+            cmdArr[input_length - 1] = '\0';
+        }
+
+        if (strcmp(cmdArr, "quit") == 0) {
             close(client_socket);
             break;
+        } else {
+            write(client_socket, cmdArr, 1024);
+            printf("Message from the server\n");
+            char buff2[1024];
+            read(client_socket, buff2, 1024);
+            printf("%s", buff2);
         }
-        write(client_socket, buff1, 1024);
-
-        printf("Message from the server\n");
-        char buff2[1024];
-        read(client_socket, buff2, 1024);
-        printf("%s", buff2);
-
-        // Implement logic to receive and handle responses from the server
     }
-
 }
 
 int validate_command(char *command) {
