@@ -17,7 +17,27 @@
 #define PORT 9002
 #define BUFFER_SIZE 1024
 
-void processclient(int client_socket);
+struct tar_header {
+    char name[100];
+    char mode[8];
+    char uid[8];
+    char gid[8];
+    char size[12];
+    char mtime[12];
+    char checksum[8];
+    char typeflag[1];
+    char linkname[100];
+    char magic[6];
+    char version[2];
+    char uname[32];
+    char gname[32];
+    char devmajor[8];
+    char devminor[8];
+    char prefix[155];
+    // ...
+};
+
+void processclient(int client_socket, pid_t pro_id);
 
 // ------------------------------------- validate_command -------------------------------
 
@@ -148,112 +168,91 @@ int validate_command(char *command) {
     return 1;
 }
 
+void send_tar_file(char *tar_name, int client_socket){
+    // Open the generated TAR file for reading
+    int tar_fd = open(tar_name, O_RDONLY);
+    if (tar_fd == -1) {
+        perror("Error opening TAR file");
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the size of the TAR file
+    off_t tar_size = lseek(tar_fd, 0, SEEK_END);
+    lseek(tar_fd, 0, SEEK_SET);
+
+    // Send the TAR file contents to the client using sendfile()
+    ssize_t bytes_sent = sendfile(client_socket, tar_fd, NULL, tar_size);
+    if (bytes_sent == -1) {
+        perror("Error sending TAR file");
+        exit(EXIT_FAILURE);
+    }
+
+    // Close the TAR file
+    close(tar_fd);
+
+}
+
 // -------------------------- handle_fgets_command ------------------------
 
-//void add_file_to_tar(FILE *tar_file, const char *file_path) {
-//    // Open the file in read mode
-//    FILE *input_file = fopen(file_path, "r");
-//    if (input_file == NULL) {
-//        fprintf(stderr, "Error opening file '%s': %s\n", file_path, strerror(errno));
-//        return;
-//    }
-//
-//    // Get the size of the file
-//    fseek(input_file, 0, SEEK_END);
-//    long file_size = ftell(input_file);
-//    fseek(input_file, 0, SEEK_SET);
-//
-//    // Allocate memory to read the file content
-//    char *file_content = (char *) malloc(file_size + 1);
-//    if (file_content == NULL) {
-//        fclose(input_file);
-//        fprintf(stderr, "Error allocating memory for file content: %s\n", strerror(errno));
-//        return;
-//    }
-//
-//    // Read the file content into memory
-//    size_t bytes_read = fread(file_content, 1, file_size, input_file);
-//    if (bytes_read != (size_t) file_size) {
-//        fprintf(stderr, "Error reading file '%s': %s\n", file_path, strerror(errno));
-//        free(file_content);
-//        fclose(input_file);
-//        return;
-//    }
-//    file_content[bytes_read] = '\0';
-//
-//    // Create the tar header for the file
-//    struct tar_header th;
-//    th.typeflag = REGTYPE;
-//    th.linkname[0] = '\0';
-//    th.size = file_size;
-//    th.chksum = 0;
-//    th.prefix[0] = '\0';
-//    th.name = file_path;
-//
-//    // Write the tar header to the tar file
-//    if (fwrite(&th, 1, sizeof(th), tar_file) != sizeof(th)) {
-//        fprintf(stderr, "Error writing tar header for file '%s': %s\n", file_path, strerror(errno));
-//        free(file_content);
-//        fclose(input_file);
-//        return;
-//    }
-//
-//    // Write the file content to the tar file
-//    if (fwrite(file_content, 1, file_size, tar_file) != (size_t) file_size) {
-//        fprintf(stderr, "Error writing file content to tar file: %s\n", strerror(errno));
-//    }
-//
-//    // Free allocated memory and close the file
-//    free(file_content);
-//    fclose(input_file);
-//}
+// Function to add a file to a tar archive
+int add_file_to_tar(const char *tar_filename, const char *file_path) {
+    char command[256];
+    snprintf(command, sizeof(command), "tar --append --file=%s %s", tar_filename, file_path);
+    system(command);
+}
 
-void search_files(const char *files[], int num_files, const char *tar_name) {
-    // Open the tar file in write mode
-    FILE *tar_file = fopen(tar_name, "w");
-    if (tar_file == NULL) {
-        fprintf(stderr, "Error creating tar archive '%s': %s\n", tar_name, strerror(errno));
+void search_and_add_file(const char *current_directory, const char *target_file,
+                         const char *tar_name) {
+
+    DIR *dir = opendir(current_directory);
+    if (dir == NULL) {
+        fprintf(stderr, "Unable to open directory '%s': %s\n", current_directory, strerror(errno));
         return;
     }
 
-    // Traverse the server's directory tree and search for the specified files
-    // You may need to modify the root directory path based on your server's file structure.
-    // Replace "/path/to/server/root/" with the actual path to the root directory of the server.
-    const char *root_directory = "/path/to/server/root/";
-    for (int i = 0; i < num_files; i++) {
-        // Construct the absolute file path
-        char file_path[256];
-        snprintf(file_path, sizeof(file_path), "%s%s", root_directory, files[i]);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
 
-        // Check if the file exists
+        char file_path[PATH_MAX];
+        snprintf(file_path, sizeof(file_path), "%s/%s", current_directory, entry->d_name);
+
         struct stat file_stat;
         if (stat(file_path, &file_stat) != 0) {
-            fprintf(stderr, "File '%s' not found: %s\n", files[i], strerror(errno));
+            fprintf(stderr, "File '%s' not found: %s\n", file_path, strerror(errno));
             continue;
         }
 
-        // Check if the file is a regular file
-        if (!S_ISREG(file_stat.st_mode)) {
-            fprintf(stderr, "File '%s' is not a regular file\n", files[i]);
-            continue;
+        if (S_ISREG(file_stat.st_mode) && strcmp(entry->d_name, target_file) == 0) {
+            // Add the file to the tar archive
+            add_file_to_tar(tar_name, file_path);
+        } else if (S_ISDIR(file_stat.st_mode)) {
+            // Recursively search in subdirectory
+            search_and_add_file(file_path, target_file, tar_name);
         }
-
-        // Add the file to the tar archive
-//        add_file_to_tar(tar_file, file_path);
     }
 
-    // Close the tar file
-    fclose(tar_file);
+    closedir(dir);
 }
 
+void search_files(const char *files[], int num_files, const char *tar_name) {
+    const char *root_directory = getenv("HOME");
+    strcat(root_directory,"/");
+    for (int i = 0; i < num_files; i++) {
+        search_and_add_file(root_directory, files[i], tar_name);
+    }
+}
 
-void handle_fgets_command(char *arguments, char *response) {
+void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated file names from the arguments
     char *file_name = strtok(arguments, " ");
     char *files[4]; // Assuming the maximum of 4 files in fgets command
     int num_files = 0;
 
     while (file_name != NULL && num_files < 4) {
+        printf("%s\n", file_name);
         files[num_files] = file_name;
         num_files++;
         file_name = strtok(NULL, " ");
@@ -263,21 +262,75 @@ void handle_fgets_command(char *arguments, char *response) {
         // No files specified in the command
         sprintf(response, "No files specified");
     } else {
-        // Create the tar archive
-        char tar_name[] = "temp.tar.gz";
-        search_files(files, num_files, tar_name);
+        // Create the directory if it doesn't exist
+        char dir_name[PATH_MAX];
+        snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
+        if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
+            perror("Error creating directory");
+            exit(EXIT_FAILURE);
+        }
+
+        // Create the tar archive within the directory
+        char tar_name[PATH_MAX];
+        snprintf(tar_name, sizeof(tar_name), "%s/%s", dir_name, "temp.tar.gz");
+        remove(tar_name);
+        search_files(files, num_files, tar_name); // Uncomment and implement this function
         sprintf(response, "Tar archive created: %s", tar_name);
+        // send_tar_file(tar_name, client_socket);
     }
 }
 
-// ----------------------------------------------------------------
+// ----------------------------handle_tarfgetz_command------------------------------------
 
 void handle_tarfgetz_command(char *arguments, char *response) {
-    // Implement logic for handling 'tarfgetz' command
-    // For demonstration purposes, let's assume we found the files and create the tar archive.
+    // Tokenize the space-separated arguments
+    char *size1_str = strtok(arguments, " ");
+    char *size2_str = strtok(NULL, " ");
+    char *unzip_flag = strtok(NULL, " ");
+    
+    if (size1_str == NULL || size2_str == NULL) {
+        sprintf(response, "Invalid arguments");
+        return;
+    }
+    
+    // Convert size1 and size2 to integers
+    int size1 = atoi(size1_str);
+    int size2 = atoi(size2_str);
+
+    if (size1 < 0 || size2 < 0 || size1 > size2) {
+        sprintf(response, "Invalid size criteria");
+        return;
+    }
+
+    // Get the user's home directory
+    const char *home_dir = getenv("HOME");
+    if (home_dir == NULL) {
+        sprintf(response, "Unable to get home directory");
+        return;
+    }
+
+    // Create a temporary TAR file name
     char tar_name[] = "temp.tar.gz";
+    
+    // Create a TAR command to find and archive files within the specified size range
+    char find_command[256];
+    snprintf(find_command, sizeof(find_command), "find %s -type f -size +%dB -a -size -%dB -print0 | xargs -0 tar czf %s", home_dir, size2, size1, tar_name);
+
+    // Execute the TAR command
+    if (system(find_command) != 0) {
+        sprintf(response, "Error creating TAR archive");
+        return;
+    }
+
+    // Check if the -u flag is specified for unzipping
+    if (unzip_flag != NULL && strcmp(unzip_flag, "-u") == 0) {
+        // Send the TAR archive to the client for unzipping
+        // send_tar_file(tar_name, client_socket);
+    }
+
     sprintf(response, "Tar archive created: %s", tar_name);
 }
+
 
 void handle_filesrch_command(char *arguments, char *response) {
     // Implement logic for handling 'filesrch' command
@@ -300,13 +353,14 @@ void handle_getdirf_command(char *arguments, char *response) {
     sprintf(response, "Tar archive created: %s", tar_name);
 }
 
-void processclient(int client_socket) {
+void processclient(int client_socket, pid_t pro_id) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
-
+    printf("%d\n", client_socket);
     while (1) {
         // Receive command from the client
-        bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
+        bytes_received = read(client_socket, buffer, 1024);
+        // bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
         if (bytes_received <= 0) {
             // Client disconnected or error occurred
             break;
@@ -314,12 +368,12 @@ void processclient(int client_socket) {
 
         buffer[bytes_received] = '\0';
 
-        // Validate the received command syntax
-        if (!validate_command(buffer)) {
-            char response[] = "Invalid command syntax";
-            send(client_socket, response, strlen(response), 0);
-            continue;
-        }
+        // // Validate the received command syntax
+        // if (!validate_command(buffer)) {
+        //     char response[] = "Invalid command syntax";
+        //     send(client_socket, response, strlen(response), 0);
+        //     continue;
+        // }
 
         // Process the client command and send appropriate responses
         char response[BUFFER_SIZE] = {0};
@@ -329,7 +383,7 @@ void processclient(int client_socket) {
         char *arguments = strtok(NULL, "");
 
         if (strcmp(command_type, "fgets") == 0) {
-            handle_fgets_command(arguments, response);
+            handle_fgets_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "tarfgetz") == 0) {
             handle_tarfgetz_command(arguments, response);
         } else if (strcmp(command_type, "filesrch") == 0) {
@@ -362,7 +416,7 @@ int main(int argc, char *argv[]) {
     socklen_t addr_len = sizeof(client_addr);
     pid_t child_pid;
 
-
+    
     if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         fprintf(stderr, "Could not create socket\n");
         exit(1);
@@ -374,10 +428,11 @@ int main(int argc, char *argv[]) {
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons((uint16_t) PORT);
 
-
+    
     // Bind socket to address and port
     if (bind(server_socket, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         perror("Error binding socket");
+        unlink(server_socket);
         close(server_socket);
         exit(1);
     }
@@ -397,9 +452,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-
-
-
         // Fork a child process to handle the client request
         child_pid = fork();
         if (child_pid < 0) {
@@ -408,24 +460,8 @@ int main(int argc, char *argv[]) {
             continue;
         } else if (child_pid == 0) {
             // Child process
-            while (1) {
-                printf("Message from the client\n");
-                char buff1[1024];
-                read(client_socket, buff1, 1024);
-                if (strcmp(buff1, "quit") == 0) {
-                    break;
-                }
-                printf("%s", buff1);
-                char buff[1024];
-                printf("\nType your message to the client\n");
-                fgets(buff, sizeof(buff), stdin);
-                // Remove the newline character from the end of the input
-                size_t input_length = strlen(buff);
-                if (input_length > 0 && buff[input_length - 1] == '\n') {
-                    buff[input_length - 1] = '\0';
-                }
-                write(client_socket, buff, 1024);
-            }
+            pid_t  pro_id = getpid();
+            processclient(client_socket, pro_id);
         } else {
             // Parent process
             close(client_socket);
