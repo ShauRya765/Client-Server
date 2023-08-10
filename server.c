@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <tar.h>
+#include <time.h>
 
 
 #define PORT 9002
@@ -282,7 +283,7 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
 
 // ----------------------------handle_tarfgetz_command------------------------------------
 
-void handle_tarfgetz_command(char *arguments, char *response) {
+void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     // Tokenize the space-separated arguments
     char *size1_str = strtok(arguments, " ");
     char *size2_str = strtok(NULL, " ");
@@ -310,14 +311,38 @@ void handle_tarfgetz_command(char *arguments, char *response) {
     }
 
     // Create a temporary TAR file name
-    char tar_name[] = "temp.tar.gz";
+    char tar_name[PATH_MAX];
     
-    // Create a TAR command to find and archive files within the specified size range
-    char find_command[256];
-    snprintf(find_command, sizeof(find_command), "find %s -type f -size +%dB -a -size -%dB -print0 | xargs -0 tar czf %s", home_dir, size2, size1, tar_name);
+    // Create a temporary file to store the list of files to archive
+    FILE *file_list = fopen("file_list.txt", "w");
+    if (file_list == NULL) {
+        sprintf(response, "Error creating file list");
+        return;
+    }
 
-    // Execute the TAR command
-    if (system(find_command) != 0) {
+    // Create the directory if it doesn't exist
+    char dir_name[PATH_MAX];
+    snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
+    if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
+        perror("Error creating directory");
+        exit(EXIT_FAILURE);
+    }
+
+    // Use the find command to write the list of files to the file
+    char find_command[256];
+    snprintf(find_command, sizeof(find_command), "find ~ -type f -size +%dk -a -size -%dk > %d/file_list.txt",size1, size2, pro_id);
+    system(find_command);
+
+    // Close the file
+    fclose(file_list);
+
+    // Create the TAR archive using the file list
+    char tar_command[256];
+
+    snprintf(tar_name, sizeof(tar_name), "%s/%s", dir_name, "temp.tar.gz");
+
+    snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %d/file_list.txt", tar_name, pro_id);
+    if (system(tar_command) != 0) {
         sprintf(response, "Error creating TAR archive");
         return;
     }
@@ -331,12 +356,68 @@ void handle_tarfgetz_command(char *arguments, char *response) {
     sprintf(response, "Tar archive created: %s", tar_name);
 }
 
+// ---------------------------------handle_filesrch_command---------------------------------
+
+void format_creation_time(time_t ctime, char *formatted_time) {
+    struct tm *timeinfo;
+    timeinfo = localtime(&ctime);
+    strftime(formatted_time, 20, "%b %d %H:%M", timeinfo);
+}
 
 void handle_filesrch_command(char *arguments, char *response) {
-    // Implement logic for handling 'filesrch' command
-    // For demonstration purposes, let's assume we found the file and have the file details.
-    char file_details[] = "sample.txt 1234 2023-08-06";
-    strcpy(response, file_details);
+    // Tokenize the command arguments to get the filename
+    char *filename = strtok(arguments, " ");
+    if (filename == NULL) {
+        sprintf(response, "No filename specified");
+        return;
+    }
+
+    // Get the user's home directory
+    const char *home_dir = getenv("HOME");
+    if (home_dir == NULL) {
+        sprintf(response, "Unable to get home directory");
+        return;
+    }
+
+    // Create a buffer to store the full path to the target file
+    char target_path[PATH_MAX];
+
+    // Use the find command to search for the file
+    char find_command[256];
+    snprintf(find_command, sizeof(find_command), "find %s -type f -name %s | head -n 1", home_dir, filename);
+
+    FILE *find_output = popen(find_command, "r");
+    if (find_output == NULL) {
+        sprintf(response, "Error searching for file");
+        return;
+    }
+
+    // Read the first line of the find command output, which should be the path to the file
+    if (fgets(target_path, sizeof(target_path), find_output) == NULL) {
+        pclose(find_output);
+        sprintf(response, "File not found");
+        return;
+    }
+
+    // Remove the newline character from the path
+    target_path[strlen(target_path) - 1] = '\0';
+
+    // Close the find command output pipe
+    pclose(find_output);
+
+    // Get file size and creation time
+    struct stat file_stat;
+    if (stat(target_path, &file_stat) != 0) {
+        sprintf(response, "Error getting file information");
+        return;
+    }
+    
+     // Convert the st_ctime value to formatted creation time
+    char formatted_time[20];
+    format_creation_time(file_stat.st_ctime, formatted_time);
+
+    // Format the response with filename, size, and formatted creation time
+    sprintf(response, "%s %lld %s", filename, (long long)file_stat.st_size, formatted_time);
 }
 
 void handle_targzf_command(char *arguments, char *response) {
@@ -385,7 +466,7 @@ void processclient(int client_socket, pid_t pro_id) {
         if (strcmp(command_type, "fgets") == 0) {
             handle_fgets_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "tarfgetz") == 0) {
-            handle_tarfgetz_command(arguments, response);
+            handle_tarfgetz_command(arguments, response, pro_id);
         } else if (strcmp(command_type, "filesrch") == 0) {
             handle_filesrch_command(arguments, response);
         } else if (strcmp(command_type, "targzf") == 0) {
