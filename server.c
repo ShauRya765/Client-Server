@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <tar.h>
+#include <arpa/inet.h>
 
 
 #define PORT 9002
@@ -354,16 +355,93 @@ void processclient(int client_socket) {
     }
 }
 
-
-int main(int argc, char *argv[]) {
-    int server_socket, client_socket;
-    int listen_fd, connection_fd, portNumber;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
+void server_connections(int server_socket) {
+    int client_socket = accept(server_socket, (struct sockaddr *) NULL, NULL);
+    if (client_socket < 0) {
+        perror("Error accepting client connection");
+    }
     pid_t child_pid;
 
+    // Fork a child process to handle the client request
+    child_pid = fork();
+    if (child_pid < 0) {
+        perror("Error forking child process");
+        close(client_socket);
+    } else if (child_pid == 0) {
+        // Child process
+        while (1) {
+            printf("Message from the client\n");
+            char buff1[1024];
+            recv(client_socket, buff1, sizeof(buff1), 0);
+            if (strcmp(buff1, "quit") == 0) {
+                break;
+            }
+            printf("%s", buff1);
+            char buff[1024];
+            printf("\nType your message to the client\n");
+            fgets(buff, sizeof(buff), stdin);
+            // Remove the newline character from the end of the input
+            size_t input_length = strlen(buff);
+            if (input_length > 0 && buff[input_length - 1] == '\n') {
+                buff[input_length - 1] = '\0';
+            }
+            send(client_socket, buff, strlen(buff), 0);
+        }
+    } else {
+        // Parent process
+        close(client_socket);
+    }
+}
 
-    if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+void route_forward(char *mirror_ip, int mirror_port, int server_sd) {
+    int client_sd = accept(server_sd, (struct sockaddr *) NULL, NULL);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        int server_mirror_sd;
+        struct sockaddr_in mirror_addr;
+        server_mirror_sd = socket(AF_INET, SOCK_STREAM, 0);
+
+        memset(&mirror_addr, 0, sizeof(mirror_addr));
+        mirror_addr.sin_family = AF_INET;
+        mirror_addr.sin_port = htons((uint16_t) mirror_port);//Port number
+
+        if (inet_pton(AF_INET, mirror_ip, &mirror_addr.sin_addr) < 0) {
+            fprintf(stderr, " inet_pton() has failed\n");
+            exit(2);
+        }
+
+        // Connect to the server
+        if (connect(server_mirror_sd, (struct sockaddrnano *) &mirror_addr, sizeof(mirror_addr)) < 0) {//Connect()
+            perror("Error connecting to server");
+            close(server_mirror_sd);
+            exit(3);
+        }
+        printf("client_Sd :: => :: %d\n", client_sd);
+        printf("server_sd :: => :: %d\n", server_sd);
+        printf("server_mirror_sd :: => :: %d\n", server_mirror_sd);
+        while (1) {
+            char client_input[1024];
+            char mirror_output[1024];
+            recv(client_sd, client_input, sizeof(client_input), 0);
+            send(server_mirror_sd, client_input, strlen(client_input), 0);
+            if(strcmp(client_input,"quit")==0){
+
+            }
+            recv(server_mirror_sd, mirror_output, sizeof(mirror_output), 0);
+            send(client_sd, mirror_output, strlen(mirror_output), 0);
+        }
+    } else {
+
+    }
+}
+
+int main(int argc, char *argv[]) {
+    int server_sd;
+    struct sockaddr_in server_addr;
+
+
+    if ((server_sd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         fprintf(stderr, "Could not create socket\n");
         exit(1);
     }
@@ -372,66 +450,51 @@ int main(int argc, char *argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons((uint16_t) PORT);
+    server_addr.sin_port = htons((uint16_t) atoi(argv[1]));
 
 
     // Bind socket to address and port
-    if (bind(server_socket, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
+    if (bind(server_sd, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         perror("Error binding socket");
-        close(server_socket);
+        close(server_sd);
         exit(1);
     }
 
     // Listen for client connections
-    if (listen(server_socket, 5) < 0) {
+    if (listen(server_sd, 5) < 0) {
         perror("Error listening");
-        close(server_socket);
+        close(server_sd);
         exit(1);
     }
 
+    int client_connections = 0;
     while (1) {
-        // Accept client connection
-        client_socket = accept(server_socket, (struct sockaddr *) NULL, NULL);
-        if (client_socket < 0) {
-            perror("Error accepting client connection");
-            continue;
-        }
+        if (client_connections < 6) {
+//            server_connections(server_sd);
+            printf("forwarding to mirror\n");
+            route_forward(argv[2], atoi(argv[3]), server_sd);
 
-
-
-
-        // Fork a child process to handle the client request
-        child_pid = fork();
-        if (child_pid < 0) {
-            perror("Error forking child process");
-            close(client_socket);
-            continue;
-        } else if (child_pid == 0) {
-            // Child process
-            while (1) {
-                printf("Message from the client\n");
-                char buff1[1024];
-                read(client_socket, buff1, 1024);
-                if (strcmp(buff1, "quit") == 0) {
-                    break;
-                }
-                printf("%s", buff1);
-                char buff[1024];
-                printf("\nType your message to the client\n");
-                fgets(buff, sizeof(buff), stdin);
-                // Remove the newline character from the end of the input
-                size_t input_length = strlen(buff);
-                if (input_length > 0 && buff[input_length - 1] == '\n') {
-                    buff[input_length - 1] = '\0';
-                }
-                write(client_socket, buff, 1024);
-            }
+            client_connections = client_connections + 1;
+            //server
+        } else if (client_connections < 12) {
+            route_forward(argv[2], atoi(argv[3]), server_sd);
+            client_connections = client_connections + 1;
+            //mirror
         } else {
-            // Parent process
-            close(client_socket);
+            if (client_connections % 2 != 0) {
+                server_connections(server_sd);
+                client_connections = client_connections + 1;
+                //server
+            } else if (client_connections % 2 == 0) {
+                route_forward(argv[1], atoi(argv[3]), server_sd);
+                client_connections = client_connections + 1;
+                //mirror
+            } else {
+                break;
+            }
         }
     }
 
-    close(server_socket);
+    close(server_sd);
     return 0;
 }
