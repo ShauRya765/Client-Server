@@ -17,6 +17,7 @@
 
 #define PORT 9002
 #define BUFFER_SIZE 1024
+#define FILE_TRANSFER_PORT 9003
 
 struct tar_header {
     char name[100];
@@ -39,6 +40,31 @@ struct tar_header {
 };
 
 void processclient(int client_socket, pid_t pro_id);
+
+
+
+// Function to transfer a file from server to client
+int transfer_file(int client_socket, const char *filename, int is_upload) {
+
+    // Open the file
+    FILE *file = fopen(filename, "rb");
+    if (file == NULL) {
+        perror("Error opening file");
+        return -1;
+    }
+
+    // Read and send the file data
+    char buffer[BUFFER_SIZE];
+    int bytes_read;
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        send(client_socket, buffer, bytes_read, 0);
+    }
+
+    // Close the file and file transfer socket
+    fclose(file);
+
+    return 0;
+}
 
 // ------------------------------------- validate_command -------------------------------
 
@@ -278,6 +304,12 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
         search_files(files, num_files, tar_name); // Uncomment and implement this function
         sprintf(response, "Tar archive created: %s", tar_name);
         // send_tar_file(tar_name, client_socket);
+        int upload_result = transfer_file(client_socket, tar_name, 1);
+        if (upload_result == 0) {
+            printf("File upload successful\n");
+        } else {
+            printf("File upload failed\n");
+        }
     }
 }
 
@@ -313,12 +345,6 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     // Create a temporary TAR file name
     char tar_name[PATH_MAX];
     
-    // Create a temporary file to store the list of files to archive
-    FILE *file_list = fopen("file_list.txt", "w");
-    if (file_list == NULL) {
-        sprintf(response, "Error creating file list");
-        return;
-    }
 
     // Create the directory if it doesn't exist
     char dir_name[PATH_MAX];
@@ -333,8 +359,6 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     snprintf(find_command, sizeof(find_command), "find ~ -type f -size +%dk -a -size -%dk > %d/file_list.txt",size1, size2, pro_id);
     system(find_command);
 
-    // Close the file
-    fclose(file_list);
 
     // Create the TAR archive using the file list
     char tar_command[256];
@@ -420,19 +444,161 @@ void handle_filesrch_command(char *arguments, char *response) {
     sprintf(response, "%s %lld %s", filename, (long long)file_stat.st_size, formatted_time);
 }
 
-void handle_targzf_command(char *arguments, char *response) {
-    // Implement logic for handling 'targzf' command
-    // For demonstration purposes, let's assume we found the files and create the tar archive.
-    char tar_name[] = "temp.tar.gz";
+// -------------------------------handle_targzf_command---------------------------------------------
+
+void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
+    // Tokenize the space-separated arguments
+    char *extension_list = strtok(arguments, " ");
+
+    // Create the directory if it doesn't exist
+    char dir_name[PATH_MAX];
+    snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
+    if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
+        perror("Error creating directory");
+        exit(EXIT_FAILURE);
+    }
+
+    if (extension_list == NULL) {
+        sprintf(response, "Invalid arguments");
+        return;
+    }
+
+    // Extract file extensions from the extension list
+    char *extensions[6]; // Assuming maximum of 6 extensions
+    int num_extensions = 0;
+
+    while (extension_list != NULL && num_extensions < 6) {
+        extensions[num_extensions] = extension_list;
+        num_extensions++;
+        extension_list = strtok(NULL, " ");
+    }
+
+    char *unzip_flag = strtok(NULL, " ");
+
+    if (num_extensions == 0) {
+        // No extensions specified in the command
+        sprintf(response, "No file extensions specified");
+        return;
+    }
+
+    char file_list_path[PATH_MAX];
+    snprintf(file_list_path, sizeof(file_list_path), "%s/%s", dir_name, "file_list.txt");
+    // Create a temporary TAR file name
+    char tar_name[PATH_MAX];
+    snprintf(tar_name, sizeof(tar_name), "%s/temp.tar.gz", dir_name);
+
+    // Create a temporary file to store the list of files to archive
+    FILE *file_list = fopen(file_list_path, "w");
+    if (file_list == NULL) {
+        sprintf(response, "Error creating file list");
+        return;
+    }
+
+
+    // Get the user's home directory
+    const char *home_dir = getenv("HOME");
+    if (home_dir == NULL) {
+        sprintf(response, "Unable to get home directory");
+        fclose(file_list);
+        return;
+    }
+
+    // Use the find command to search for files with specified extensions
+    char find_command[256];
+    snprintf(find_command, sizeof(find_command), "find %s -type f ", home_dir);
+    
+    for (int i = 0; i < num_extensions; i++) {
+        if (i > 0) {
+            strcat(find_command, "-o ");
+        }
+        strcat(find_command, "-name '*.");
+        strcat(find_command, extensions[i]);
+        printf("%s\n", extensions[i]);
+        strcat(find_command, "' ");
+    }
+
+    
+    strcat(find_command, " > ");
+    strcat(find_command, file_list_path);
+
+    printf("%s\n", find_command);
+    // Execute the find command to generate the file list
+    system(find_command);
+
+    // Close the file
+    fclose(file_list);
+
+    // Create the TAR archive using the file list
+    char tar_command[PATH_MAX + 50];
+    snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %s", tar_name, file_list_path);
+    if (system(tar_command) != 0) {
+        sprintf(response, "Error creating TAR archive");
+        return;
+    }
+
+    // Check if the -u flag is specified for unzipping
+    if (unzip_flag != NULL && strcmp(unzip_flag, "-u") == 0) {
+        // Send the TAR archive to the client for unzipping
+        // send_tar_file(tar_name, client_socket);
+    }
+
     sprintf(response, "Tar archive created: %s", tar_name);
 }
 
+
 void handle_getdirf_command(char *arguments, char *response) {
-    // Implement logic for handling 'getdirf' command
-    // For demonstration purposes, let's assume we found the files and create the tar archive.
-    char tar_name[] = "temp.tar.gz";
+    // Tokenize the command arguments
+    char *date1 = strtok(arguments, " ");
+    char *date2 = strtok(NULL, " ");
+    char *unzip_flag = strtok(NULL, " ");
+
+    if (date1 == NULL || date2 == NULL) {
+        sprintf(response, "Invalid arguments");
+        return;
+    }
+
+    // Get the user's home directory
+    const char *home_dir = getenv("HOME");
+    if (home_dir == NULL) {
+        sprintf(response, "Unable to get home directory");
+        return;
+    }
+
+    // Create a directory to store the TAR archive
+    char dir_name[PATH_MAX];
+    snprintf(dir_name, sizeof(dir_name), "%d", (int)getpid());
+    if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
+        perror("Error creating directory");
+        return;
+    }
+
+    // Create a temporary TAR file name
+    char tar_name[PATH_MAX];
+    snprintf(tar_name, sizeof(tar_name), "%s/temp.tar.gz", dir_name);
+
+    // Use the find command to search for files within the specified date range
+    char find_command[512];
+    snprintf(find_command, sizeof(find_command), "find %s -type f -newermt %s ! -newermt %s > %s/file_list.txt",
+             home_dir, date1, date2, dir_name);
+    system(find_command);
+
+    // Create the TAR archive using the file list
+    char tar_command[512];
+    snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %s/file_list.txt", tar_name, dir_name);
+    if (system(tar_command) != 0) {
+        sprintf(response, "Error creating TAR archive");
+        return;
+    }
+
+    // Check if the -u flag is specified for unzipping
+    if (unzip_flag != NULL && strcmp(unzip_flag, "-u") == 0) {
+        // Send the TAR archive to the client for unzipping
+        // send_tar_file(tar_name, client_socket);
+    }
+
     sprintf(response, "Tar archive created: %s", tar_name);
 }
+
 
 void processclient(int client_socket, pid_t pro_id) {
     char buffer[BUFFER_SIZE];
@@ -470,7 +636,7 @@ void processclient(int client_socket, pid_t pro_id) {
         } else if (strcmp(command_type, "filesrch") == 0) {
             handle_filesrch_command(arguments, response);
         } else if (strcmp(command_type, "targzf") == 0) {
-            handle_targzf_command(arguments, response);
+            handle_targzf_command(arguments, response, pro_id);
         } else if (strcmp(command_type, "getdirf") == 0) {
             handle_getdirf_command(arguments, response);
         } else if (strcmp(command_type, "quit") == 0) {
