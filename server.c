@@ -13,7 +13,9 @@
 #include <errno.h>
 #include <tar.h>
 #include <time.h>
-
+#include <arpa/inet.h>
+#include <signal.h>
+#include <limits.h>
 
 #define PORT 9002
 #define BUFFER_SIZE 1024
@@ -40,7 +42,6 @@ struct tar_header {
 };
 
 void processclient(int client_socket, pid_t pro_id);
-
 
 
 // Function to transfer a file from server to client
@@ -195,30 +196,6 @@ int validate_command(char *command) {
     return 1;
 }
 
-void send_tar_file(char *tar_name, int client_socket){
-    // Open the generated TAR file for reading
-    int tar_fd = open(tar_name, O_RDONLY);
-    if (tar_fd == -1) {
-        perror("Error opening TAR file");
-        exit(EXIT_FAILURE);
-    }
-
-    // Get the size of the TAR file
-    off_t tar_size = lseek(tar_fd, 0, SEEK_END);
-    lseek(tar_fd, 0, SEEK_SET);
-
-    // Send the TAR file contents to the client using sendfile()
-    ssize_t bytes_sent = sendfile(client_socket, tar_fd, NULL, tar_size);
-    if (bytes_sent == -1) {
-        perror("Error sending TAR file");
-        exit(EXIT_FAILURE);
-    }
-
-    // Close the TAR file
-    close(tar_fd);
-
-}
-
 // -------------------------- handle_fgets_command ------------------------
 
 // Function to add a file to a tar archive
@@ -266,7 +243,7 @@ void search_and_add_file(const char *current_directory, const char *target_file,
 
 void search_files(const char *files[], int num_files, const char *tar_name) {
     const char *root_directory = getenv("HOME");
-    strcat(root_directory,"/");
+    strcat(root_directory, "/");
     for (int i = 0; i < num_files; i++) {
         search_and_add_file(root_directory, files[i], tar_name);
     }
@@ -320,12 +297,12 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     char *size1_str = strtok(arguments, " ");
     char *size2_str = strtok(NULL, " ");
     char *unzip_flag = strtok(NULL, " ");
-    
+
     if (size1_str == NULL || size2_str == NULL) {
         sprintf(response, "Invalid arguments");
         return;
     }
-    
+
     // Convert size1 and size2 to integers
     int size1 = atoi(size1_str);
     int size2 = atoi(size2_str);
@@ -344,7 +321,7 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
 
     // Create a temporary TAR file name
     char tar_name[PATH_MAX];
-    
+
 
     // Create the directory if it doesn't exist
     char dir_name[PATH_MAX];
@@ -356,7 +333,8 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
 
     // Use the find command to write the list of files to the file
     char find_command[256];
-    snprintf(find_command, sizeof(find_command), "find ~ -type f -size +%dk -a -size -%dk > %d/file_list.txt",size1, size2, pro_id);
+    snprintf(find_command, sizeof(find_command), "find ~ -type f -size +%dk -a -size -%dk > %d/file_list.txt", size1,
+             size2, pro_id);
     system(find_command);
 
 
@@ -435,13 +413,13 @@ void handle_filesrch_command(char *arguments, char *response) {
         sprintf(response, "Error getting file information");
         return;
     }
-    
-     // Convert the st_ctime value to formatted creation time
+
+    // Convert the st_ctime value to formatted creation time
     char formatted_time[20];
     format_creation_time(file_stat.st_ctime, formatted_time);
 
     // Format the response with filename, size, and formatted creation time
-    sprintf(response, "%s %lld %s", filename, (long long)file_stat.st_size, formatted_time);
+    sprintf(response, "%s %lld %s", filename, (long long) file_stat.st_size, formatted_time);
 }
 
 // -------------------------------handle_targzf_command---------------------------------------------
@@ -506,7 +484,7 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
     // Use the find command to search for files with specified extensions
     char find_command[256];
     snprintf(find_command, sizeof(find_command), "find %s -type f ", home_dir);
-    
+
     for (int i = 0; i < num_extensions; i++) {
         if (i > 0) {
             strcat(find_command, "-o ");
@@ -517,7 +495,7 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
         strcat(find_command, "' ");
     }
 
-    
+
     strcat(find_command, " > ");
     strcat(find_command, file_list_path);
 
@@ -566,7 +544,7 @@ void handle_getdirf_command(char *arguments, char *response) {
 
     // Create a directory to store the TAR archive
     char dir_name[PATH_MAX];
-    snprintf(dir_name, sizeof(dir_name), "%d", (int)getpid());
+    snprintf(dir_name, sizeof(dir_name), "%d", (int) getpid());
     if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
         perror("Error creating directory");
         return;
@@ -655,16 +633,84 @@ void processclient(int client_socket, pid_t pro_id) {
     }
 }
 
-
-int main(int argc, char *argv[]) {
-    int server_socket, client_socket;
-    int listen_fd, connection_fd, portNumber;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
+void server_connections(int server_socket) {
+    int client_socket = accept(server_socket, (struct sockaddr *) NULL, NULL);
+    if (client_socket < 0) {
+        perror("Error accepting client connection");
+    }
     pid_t child_pid;
 
-    
-    if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    // Fork a child process to handle the client request
+    child_pid = fork();
+    if (child_pid < 0) {
+        perror("Error forking child process");
+        close(client_socket);
+    } else if (child_pid == 0) {
+        // Child process
+        pid_t pro_id = getpid();
+        processclient(client_socket, pro_id);
+    } else {
+        // Parent process
+        close(client_socket);
+    }
+}
+
+void route_forward(char *mirror_ip, int mirror_port, int server_sd) {
+    int client_sd = accept(server_sd, (struct sockaddr *) NULL, NULL);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        int server_mirror_sd;
+        struct sockaddr_in mirror_addr;
+        server_mirror_sd = socket(AF_INET, SOCK_STREAM, 0);
+
+        memset(&mirror_addr, 0, sizeof(mirror_addr));
+        mirror_addr.sin_family = AF_INET;
+        mirror_addr.sin_port = htons((uint16_t) mirror_port);//Port number
+
+        if (inet_pton(AF_INET, mirror_ip, &mirror_addr.sin_addr) < 0) {
+            fprintf(stderr, " inet_pton() has failed\n");
+            exit(2);
+        }
+
+        // Connect to the server
+        if (connect(server_mirror_sd, (struct sockaddrnano *) &mirror_addr, sizeof(mirror_addr)) < 0) {//Connect()
+            perror("Error connecting to server");
+            close(server_mirror_sd);
+            exit(3);
+        }
+        printf("client_Sd :: => :: %d\n", client_sd);
+        printf("server_sd :: => :: %d\n", server_sd);
+        printf("server_mirror_sd :: => :: %d\n", server_mirror_sd);
+        pid_t child_pid = getpid();
+        printf("child_pid :: => :: %d\n", child_pid);
+        printf("parent pid :: => :: %d\n", getpgid(child_pid));
+        while (1) {
+            char client_input[1024];
+            char mirror_output[1024];
+            recv(client_sd, client_input, sizeof(client_input), 0);
+            printf("client_input :: => :: %s\n", client_input);
+            send(server_mirror_sd, client_input, strlen(client_input), 0);
+            if (strcmp(client_input, "quit") == 0) {
+                printf("quit\n");
+                close(server_mirror_sd);
+                kill(child_pid, 0);
+                exit(0);
+            }
+            recv(server_mirror_sd, mirror_output, sizeof(mirror_output), 0);
+            send(client_sd, mirror_output, strlen(mirror_output), 0);
+            memset(client_input, 0, sizeof(client_input));
+        }
+    } else {
+    }
+}
+
+int main(int argc, char *argv[]) {
+    int server_sd;
+    struct sockaddr_in server_addr;
+
+
+    if ((server_sd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         fprintf(stderr, "Could not create socket\n");
         exit(1);
     }
@@ -673,48 +719,50 @@ int main(int argc, char *argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons((uint16_t) PORT);
+    server_addr.sin_port = htons((uint16_t) atoi(argv[1]));
 
-    
+
     // Bind socket to address and port
-    if (bind(server_socket, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
+    if (bind(server_sd, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         perror("Error binding socket");
-        unlink(server_socket);
-        close(server_socket);
+        close(server_sd);
         exit(1);
     }
 
     // Listen for client connections
-    if (listen(server_socket, 5) < 0) {
+    if (listen(server_sd, 5) < 0) {
         perror("Error listening");
-        close(server_socket);
+        close(server_sd);
         exit(1);
     }
 
+    int client_connections = 0;
     while (1) {
-        // Accept client connection
-        client_socket = accept(server_socket, (struct sockaddr *) NULL, NULL);
-        if (client_socket < 0) {
-            perror("Error accepting client connection");
-            continue;
-        }
+        if (client_connections < 6) {
+            server_connections(server_sd);
+            printf("forwarding to mirror\n");
 
-        // Fork a child process to handle the client request
-        child_pid = fork();
-        if (child_pid < 0) {
-            perror("Error forking child process");
-            close(client_socket);
-            continue;
-        } else if (child_pid == 0) {
-            // Child process
-            pid_t  pro_id = getpid();
-            processclient(client_socket, pro_id);
+            client_connections = client_connections + 1;
+            //server
+        } else if (client_connections < 12) {
+            route_forward(argv[2], atoi(argv[3]), server_sd);
+            client_connections = client_connections + 1;
+            //mirror
         } else {
-            // Parent process
-            close(client_socket);
+            if (client_connections % 2 != 0) {
+                server_connections(server_sd);
+                client_connections = client_connections + 1;
+                //server
+            } else if (client_connections % 2 == 0) {
+                route_forward(argv[1], atoi(argv[3]), server_sd);
+                client_connections = client_connections + 1;
+                //mirror
+            } else {
+                break;
+            }
         }
     }
 
-    close(server_socket);
+    close(server_sd);
     return 0;
 }
