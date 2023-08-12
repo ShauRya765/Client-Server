@@ -63,24 +63,23 @@ int main(int argc, char *argv[]) {
         strcpy(tempCmdArr, cmdArr);
 
         validate_command(tempCmdArr);
-
-        if (strcmp(cmdArr, "quit") == 0) {
-            close(client_socket);
-            break;
-        } else {
-            if (isCmdValid == 1) {
-                printf("\nisCmdValid :: => :: %d\n", isCmdValid);
-                send(client_socket, cmdArr, strlen(cmdArr), 0);
-                printf("Message from the server\n");
-                char server_response[1024];
-                recv(client_socket, server_response, sizeof(server_response), 0);
-                printf("%s", server_response);
-            } else {
-                printf("\ncommand is not valid\n");
+        if (isCmdValid == 1) {
+            printf("\nisCmdValid :: => :: %d\n", isCmdValid);
+            send(client_socket, cmdArr, strlen(cmdArr), 0);
+            if (strcmp(cmdArr, "quit") == 0) {
+                close(client_socket);
+                break;
             }
+            printf("Message from the server\n");
+            char server_response[1024];
+            recv(client_socket, server_response, sizeof(server_response), 0);
+            printf("%s", server_response);
+        } else {
+            printf("\ncommand is not valid\n");
         }
     }
 }
+
 
 int checkInputCmd(char *command) {
     int fileCount = 0;
@@ -213,6 +212,8 @@ void validate_command(char *command) {
         isCmdValid = 1;
     } else if (substrExists(tempCmd, "getdirf")) {
         validate_getDirf(command);
+    } else if (substrExists(tempCmd, "quit")) {
+        isCmdValid = 1;
     } else {
         isCmdValid = 0;
     }

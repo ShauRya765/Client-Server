@@ -405,6 +405,9 @@ int main(int argc, char *argv[]) {
             continue;
         } else if (child_pid == 0) {
             // Child process
+            pid_t pid = getpid();
+            printf("child_pid :: => :: %d\n", pid);
+
             while (1) {
                 printf("Message from the client\n");
                 char buff1[1024];
@@ -413,6 +416,9 @@ int main(int argc, char *argv[]) {
                     break;
                 }
                 printf("%s", buff1);
+                if (strcmp(buff1, "quit") == 0) {
+                    exit(0);
+                }
                 char buff[1024];
                 printf("\nType your message to the client\n");
                 fgets(buff, sizeof(buff), stdin);

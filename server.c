@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <tar.h>
 #include <arpa/inet.h>
-
+#include <signal.h>
 
 #define PORT 9002
 #define BUFFER_SIZE 1024
@@ -374,7 +374,10 @@ void server_connections(int server_socket) {
             char buff1[1024];
             recv(client_socket, buff1, sizeof(buff1), 0);
             if (strcmp(buff1, "quit") == 0) {
-                break;
+                printf("quit\n");
+                close(client_socket);
+                kill(child_pid, 0);
+                exit(0);
             }
             printf("%s", buff1);
             char buff[1024];
@@ -420,19 +423,26 @@ void route_forward(char *mirror_ip, int mirror_port, int server_sd) {
         printf("client_Sd :: => :: %d\n", client_sd);
         printf("server_sd :: => :: %d\n", server_sd);
         printf("server_mirror_sd :: => :: %d\n", server_mirror_sd);
+        pid_t child_pid = getpid();
+        printf("child_pid :: => :: %d\n", child_pid);
+        printf("parent pid :: => :: %d\n", getpgid(child_pid));
         while (1) {
             char client_input[1024];
             char mirror_output[1024];
             recv(client_sd, client_input, sizeof(client_input), 0);
+            printf("client_input :: => :: %s\n", client_input);
             send(server_mirror_sd, client_input, strlen(client_input), 0);
-            if(strcmp(client_input,"quit")==0){
-
+            if (strcmp(client_input, "quit") == 0) {
+                printf("quit\n");
+                close(server_mirror_sd);
+                kill(child_pid, 0);
+                exit(0);
             }
             recv(server_mirror_sd, mirror_output, sizeof(mirror_output), 0);
             send(client_sd, mirror_output, strlen(mirror_output), 0);
+            memset(client_input, 0, sizeof(client_input));
         }
     } else {
-
     }
 }
 
