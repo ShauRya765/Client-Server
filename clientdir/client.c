@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <fcntl.h>
 
 #define PORT 9003
 #define BUFFER_SIZE 1024
@@ -16,6 +17,71 @@ int isCmdValid = 0;
 
 
 void validate_command(char *command);
+
+void receive_tar_file(int socket) {
+    long file_size;
+    if (recv(socket, &file_size, sizeof(file_size), 0) == -1) {
+        perror("Error receiving file size");
+        return;
+    }
+
+    printf("%ld\n", file_size);
+
+    if (file_size == 0) {
+        printf("No file to receive.\n");
+        return;
+    }
+
+    FILE *file = fopen("received.tar.gz", "wb");
+    if (file == NULL) {
+        perror("Error opening destination file");
+        return;
+    }
+
+    char buffer[file_size];
+    size_t total_bytes_received = 0;
+    ssize_t bytes_received;
+
+    while (total_bytes_received < file_size) {
+        bytes_received = recv(socket, buffer, sizeof(buffer), 0);
+        if (bytes_received <= 0) {
+            if (bytes_received == 0) {
+                printf("Connection closed by the server.\n");
+            } else {
+                perror("Error receiving file data");
+            }
+            break;
+        }
+
+        size_t bytes_written = fwrite(buffer, 1, bytes_received, file);
+        if (bytes_written < bytes_received) {
+            perror("Error writing to file");
+            break;
+        }
+
+        total_bytes_received += bytes_written;
+    }
+
+    if (fclose(file) == EOF) {
+        perror("Error closing destination file");
+    } else {
+        printf("File received and saved as 'received.tar.gz'.\n");
+    }
+}
+
+void receive_response(int socket) {
+    char response[BUFFER_SIZE];
+    ssize_t bytes_received = recv(socket, response, sizeof(response) - 1, 0);
+    if (bytes_received > 0) {
+        response[bytes_received] = '\0';
+        printf("Response from server: %s\n", response);
+    } else if (bytes_received == 0) {
+        printf("Connection closed by the server.\n");
+    } else {
+        perror("Error receiving response");
+    }
+}
+
 
 int main(int argc, char *argv[]) {
     int client_socket;
@@ -27,7 +93,7 @@ int main(int argc, char *argv[]) {
     if (client_socket < 0) {
         perror("Error creating socket");
         exit(1);
-    }
+    } 
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -70,10 +136,22 @@ int main(int argc, char *argv[]) {
                 close(client_socket);
                 break;
             }
-            printf("Message from the server\n");
+            printf("Message from the server:\n\n");
+            
+            // Receive the flag from the server
+            int flag;
+            recv(client_socket, &flag, sizeof(int), 0);
+            printf("%d\n",flag);
+
+             if (flag == 1) {
+                receive_tar_file(client_socket);               
+             }
+
+            printf("printing response:\n");
             char server_response[1024];
-            recv(client_socket, server_response, sizeof(server_response), 0);
+            recv(client_socket, server_response, sizeof(server_response)-1, 0);
             printf("%s", server_response);
+
         } else {
             printf("\ncommand is not valid\n");
         }
@@ -209,6 +287,8 @@ void validate_command(char *command) {
     } else if (substrExists(tempCmd, "tarfgetz")) {
         validate_tarGets(tempCmd);
     } else if (substrExists(tempCmd, "filesrch")) {
+        isCmdValid = 1;
+    } else if (substrExists(tempCmd, "targzf")) {
         isCmdValid = 1;
     } else if (substrExists(tempCmd, "getdirf")) {
         validate_getDirf(command);

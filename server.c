@@ -199,14 +199,19 @@ int validate_command(char *command) {
 // -------------------------- handle_fgets_command ------------------------
 
 // Function to add a file to a tar archive
-int add_file_to_tar(const char *tar_filename, const char *file_path) {
+int add_file_to_tar(const char *tar_filename, const char *file_path, int *flag, char *response) {
     char command[256];
     snprintf(command, sizeof(command), "tar --append --file=%s %s", tar_filename, file_path);
-    system(command);
+    if (system(command) != 0) {
+        sprintf(response, "Error creating TAR archive");
+        printf("file not found");
+        *flag=0;
+        return;
+    }
 }
 
 void search_and_add_file(const char *current_directory, const char *target_file,
-                         const char *tar_name) {
+                         const char *tar_name, int *flag, char *response) {
 
     DIR *dir = opendir(current_directory);
     if (dir == NULL) {
@@ -226,27 +231,97 @@ void search_and_add_file(const char *current_directory, const char *target_file,
         struct stat file_stat;
         if (stat(file_path, &file_stat) != 0) {
             fprintf(stderr, "File '%s' not found: %s\n", file_path, strerror(errno));
+            printf("not found");
+            *flag=0;
             continue;
         }
 
         if (S_ISREG(file_stat.st_mode) && strcmp(entry->d_name, target_file) == 0) {
             // Add the file to the tar archive
-            add_file_to_tar(tar_name, file_path);
+            add_file_to_tar(tar_name, file_path, flag, response);
         } else if (S_ISDIR(file_stat.st_mode)) {
             // Recursively search in subdirectory
-            search_and_add_file(file_path, target_file, tar_name);
+            search_and_add_file(file_path, target_file, tar_name, flag, response);
         }
     }
 
     closedir(dir);
 }
 
-void search_files(const char *files[], int num_files, const char *tar_name) {
+void search_files(const char *files[], int num_files, const char *tar_name, int *flag, char *response) {
     const char *root_directory = getenv("HOME");
     strcat(root_directory, "/");
     for (int i = 0; i < num_files; i++) {
-        search_and_add_file(root_directory, files[i], tar_name);
+        search_and_add_file(root_directory, files[i], tar_name, flag, response);
     }
+}
+
+// void send_tar_file(const char *filename, int client_socket) {
+//     int fd = open(filename, O_RDONLY);
+//     if (fd == -1) {
+//         perror("Error opening file");
+//         return;
+//     }
+
+//     struct stat stat_buf;
+//     if (fstat(fd, &stat_buf) != 0) {
+//         perror("Error getting file size");
+//         close(fd);
+//         return;
+//     }
+
+//     // Send the file size to the client
+//     off_t file_size = stat_buf.st_size;
+//     printf("%ld\n", file_size);
+//     if (send(client_socket, &file_size, sizeof(off_t), 0) == -1) {
+//         perror("Error sending file size");
+//         close(fd);
+//         return;
+//     }
+
+//     // Send the file data using the sendfile() function
+//     off_t offset = 0;
+//     ssize_t sent_bytes = sendfile(client_socket, fd, &offset, stat_buf.st_size);
+//     if (sent_bytes == -1) {
+//         perror("Error sending file data");
+//         close(fd);
+//         return;
+//     }
+
+//     printf("Sent %zd bytes of file data\n", sent_bytes);
+
+//     close(fd);
+// }
+
+void send_tar_file(const char *file_path, int socket) {
+    FILE *file = fopen(file_path, "rb");
+    if (file == NULL) {
+        perror("Error opening TAR file");
+        return;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    if (send(socket, &file_size, sizeof(file_size), 0) == -1) {
+        perror("Error sending file size");
+        fclose(file);
+        return;
+    }
+    printf("%ld\n", file_size);
+    
+    char buffer[file_size];
+    size_t bytes_read;
+
+    while ((bytes_read = fread(buffer, 1, file_size, file)) > 0) {
+        if (send(socket, buffer, bytes_read, 0) == -1) {
+            perror("Error sending TAR file");
+            break;
+        }
+    }
+
+    fclose(file);
 }
 
 void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
@@ -254,6 +329,7 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
     char *file_name = strtok(arguments, " ");
     char *files[4]; // Assuming the maximum of 4 files in fgets command
     int num_files = 0;
+    int start_flag = 1;
 
     while (file_name != NULL && num_files < 4) {
         printf("%s\n", file_name);
@@ -265,41 +341,60 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
     if (num_files == 0) {
         // No files specified in the command
         sprintf(response, "No files specified");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
     } else {
         // Create the directory if it doesn't exist
         char dir_name[PATH_MAX];
         snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
         if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
             perror("Error creating directory");
-            exit(EXIT_FAILURE);
+            sprintf(response, "Error creating directory");
+            start_flag = 0;
+            send(client_socket, &start_flag, sizeof(int), 0);
+            return;
         }
 
         // Create the tar archive within the directory
         char tar_name[PATH_MAX];
         snprintf(tar_name, sizeof(tar_name), "%s/%s", dir_name, "temp.tar.gz");
-        remove(tar_name);
-        search_files(files, num_files, tar_name); // Uncomment and implement this function
-        sprintf(response, "Tar archive created: %s", tar_name);
-        // send_tar_file(tar_name, client_socket);
-        int upload_result = transfer_file(client_socket, tar_name, 1);
-        if (upload_result == 0) {
-            printf("File upload successful\n");
+        remove(tar_name); // previous temp tar file deleting
+        search_files(files, num_files, tar_name, &start_flag, response); // Uncomment and implement this function
+
+        // Check if the file exists
+        if (access(tar_name, F_OK) != -1) {
+            start_flag=1;
         } else {
-            printf("File upload failed\n");
+            start_flag=0;
         }
+
+        if (start_flag == 1){
+            sprintf(response, "Tar archive created: %s", tar_name);
+            send(client_socket, &start_flag, sizeof(int), 0);
+            send_tar_file(tar_name, client_socket);
+        } else {
+            send(client_socket, &start_flag, sizeof(int), 0);
+            sprintf(response, "No file found");
+        }
+        
+       
     }
 }
 
 // ----------------------------handle_tarfgetz_command------------------------------------
 
-void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
+void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int client_socket ) {
     // Tokenize the space-separated arguments
     char *size1_str = strtok(arguments, " ");
     char *size2_str = strtok(NULL, " ");
     char *unzip_flag = strtok(NULL, " ");
+    int start_flag = 1;
 
     if (size1_str == NULL || size2_str == NULL) {
         sprintf(response, "Invalid arguments");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -309,6 +404,8 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
 
     if (size1 < 0 || size2 < 0 || size1 > size2) {
         sprintf(response, "Invalid size criteria");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -316,6 +413,8 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     const char *home_dir = getenv("HOME");
     if (home_dir == NULL) {
         sprintf(response, "Unable to get home directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -327,25 +426,63 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
     char dir_name[PATH_MAX];
     snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
     if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
-        perror("Error creating directory");
-        exit(EXIT_FAILURE);
+        sprintf(response, "Error creating directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
     }
 
     // Use the find command to write the list of files to the file
     char find_command[256];
     snprintf(find_command, sizeof(find_command), "find ~ -type f -size +%dk -a -size -%dk > %d/file_list.txt", size1,
              size2, pro_id);
-    system(find_command);
+    if (system(find_command) != 0) {
+        sprintf(response, "No files found");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
+    }
+
+    char filename[256];
+    snprintf(filename, sizeof(filename), "%d/file_list.txt", pro_id);
+    // Open the file in binary read mode
+    FILE *file = fopen(filename, "rb");
+    if (file == NULL) {
+        perror("Error opening file");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
+    }
+
+    // Seek to the end of the file
+    fseek(file, 0, SEEK_END);
+
+    // Get the current position (which is the size of the file)
+    long file_size = ftell(file);
+
+    if (file_size == 0) {
+        sprintf(response, "No files found");
+        start_flag = 0;
+        printf("not found");
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
+    } 
+
+    // Close the file
+    fclose(file);
 
 
     // Create the TAR archive using the file list
     char tar_command[256];
 
     snprintf(tar_name, sizeof(tar_name), "%s/%s", dir_name, "temp.tar.gz");
+    remove(tar_name); // previous temp tar file deleting
 
     snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %d/file_list.txt", tar_name, pro_id);
     if (system(tar_command) != 0) {
         sprintf(response, "Error creating TAR archive");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -355,7 +492,17 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id) {
         // send_tar_file(tar_name, client_socket);
     }
 
-    sprintf(response, "Tar archive created: %s", tar_name);
+    if (start_flag == 1){
+        sprintf(response, "Tar archive created: %s", tar_name);
+        printf("sending response...\n");
+        send(client_socket, &start_flag, sizeof(int), 0);
+        send_tar_file(tar_name, client_socket);
+        printf("sending response...\n");
+        return;
+    } else {
+        sprintf(response, "No files found");
+        send(client_socket, &start_flag, sizeof(int), 0);
+    }
 }
 
 // ---------------------------------handle_filesrch_command---------------------------------
@@ -366,11 +513,13 @@ void format_creation_time(time_t ctime, char *formatted_time) {
     strftime(formatted_time, 20, "%b %d %H:%M", timeinfo);
 }
 
-void handle_filesrch_command(char *arguments, char *response) {
+void handle_filesrch_command(char *arguments, char *response, int client_socket) {
     // Tokenize the command arguments to get the filename
+    int start_flag = 0;
     char *filename = strtok(arguments, " ");
     if (filename == NULL) {
         sprintf(response, "No filename specified");
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -378,6 +527,7 @@ void handle_filesrch_command(char *arguments, char *response) {
     const char *home_dir = getenv("HOME");
     if (home_dir == NULL) {
         sprintf(response, "Unable to get home directory");
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -391,6 +541,7 @@ void handle_filesrch_command(char *arguments, char *response) {
     FILE *find_output = popen(find_command, "r");
     if (find_output == NULL) {
         sprintf(response, "Error searching for file");
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -398,6 +549,7 @@ void handle_filesrch_command(char *arguments, char *response) {
     if (fgets(target_path, sizeof(target_path), find_output) == NULL) {
         pclose(find_output);
         sprintf(response, "File not found");
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -407,9 +559,12 @@ void handle_filesrch_command(char *arguments, char *response) {
     // Close the find command output pipe
     pclose(find_output);
 
+
+
     // Get file size and creation time
     struct stat file_stat;
     if (stat(target_path, &file_stat) != 0) {
+        send(client_socket, &start_flag, sizeof(int), 0);
         sprintf(response, "Error getting file information");
         return;
     }
@@ -420,24 +575,31 @@ void handle_filesrch_command(char *arguments, char *response) {
 
     // Format the response with filename, size, and formatted creation time
     sprintf(response, "%s %lld %s", filename, (long long) file_stat.st_size, formatted_time);
+    send(client_socket, &start_flag, sizeof(int), 0);
 }
 
 // -------------------------------handle_targzf_command---------------------------------------------
 
-void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
+void handle_targzf_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated arguments
     char *extension_list = strtok(arguments, " ");
+    int start_flag = 1;
 
     // Create the directory if it doesn't exist
     char dir_name[PATH_MAX];
     snprintf(dir_name, sizeof(dir_name), "%d", pro_id);
     if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
         perror("Error creating directory");
-        exit(EXIT_FAILURE);
+        sprintf(response, "Error creating directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
     }
 
     if (extension_list == NULL) {
         sprintf(response, "Invalid arguments");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -456,6 +618,8 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
     if (num_extensions == 0) {
         // No extensions specified in the command
         sprintf(response, "No file extensions specified");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -469,6 +633,8 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
     FILE *file_list = fopen(file_list_path, "w");
     if (file_list == NULL) {
         sprintf(response, "Error creating file list");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -477,6 +643,8 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
     const char *home_dir = getenv("HOME");
     if (home_dir == NULL) {
         sprintf(response, "Unable to get home directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         fclose(file_list);
         return;
     }
@@ -491,17 +659,20 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
         }
         strcat(find_command, "-name '*.");
         strcat(find_command, extensions[i]);
-        printf("%s\n", extensions[i]);
         strcat(find_command, "' ");
     }
 
 
     strcat(find_command, " > ");
     strcat(find_command, file_list_path);
-
-    printf("%s\n", find_command);
     // Execute the find command to generate the file list
-    system(find_command);
+
+    if (system(find_command) != 0) {
+        sprintf(response, "No files found");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
+    }
 
     // Close the file
     fclose(file_list);
@@ -511,6 +682,8 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
     snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %s", tar_name, file_list_path);
     if (system(tar_command) != 0) {
         sprintf(response, "Error creating TAR archive");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -520,18 +693,28 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id) {
         // send_tar_file(tar_name, client_socket);
     }
 
-    sprintf(response, "Tar archive created: %s", tar_name);
+    if (start_flag == 1){
+        sprintf(response, "Tar archive created: %s", tar_name);
+        send(client_socket, &start_flag, sizeof(int), 0);
+        send_tar_file(tar_name, client_socket);
+    } else {
+        sprintf(response, "No file found");
+        send(client_socket, &start_flag, sizeof(int), 0);
+    }
 }
 
 
-void handle_getdirf_command(char *arguments, char *response) {
+void handle_getdirf_command(char *arguments, char *response, int client_socket) {
     // Tokenize the command arguments
     char *date1 = strtok(arguments, " ");
     char *date2 = strtok(NULL, " ");
     char *unzip_flag = strtok(NULL, " ");
+    int start_flag = 1;
 
     if (date1 == NULL || date2 == NULL) {
         sprintf(response, "Invalid arguments");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -539,6 +722,8 @@ void handle_getdirf_command(char *arguments, char *response) {
     const char *home_dir = getenv("HOME");
     if (home_dir == NULL) {
         sprintf(response, "Unable to get home directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -547,6 +732,9 @@ void handle_getdirf_command(char *arguments, char *response) {
     snprintf(dir_name, sizeof(dir_name), "%d", (int) getpid());
     if (mkdir(dir_name, 0777) != 0 && errno != EEXIST) {
         perror("Error creating directory");
+        sprintf(response, "Error creating directory");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -558,13 +746,21 @@ void handle_getdirf_command(char *arguments, char *response) {
     char find_command[512];
     snprintf(find_command, sizeof(find_command), "find %s -type f -newermt %s ! -newermt %s > %s/file_list.txt",
              home_dir, date1, date2, dir_name);
-    system(find_command);
+
+    if (system(find_command) != 0) {
+        sprintf(response, "Error creating TAR archive");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
+        return;
+    }
 
     // Create the TAR archive using the file list
     char tar_command[512];
     snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %s/file_list.txt", tar_name, dir_name);
     if (system(tar_command) != 0) {
         sprintf(response, "Error creating TAR archive");
+        start_flag = 0;
+        send(client_socket, &start_flag, sizeof(int), 0);
         return;
     }
 
@@ -574,7 +770,15 @@ void handle_getdirf_command(char *arguments, char *response) {
         // send_tar_file(tar_name, client_socket);
     }
 
-    sprintf(response, "Tar archive created: %s", tar_name);
+    if (start_flag == 1){
+        sprintf(response, "Tar archive created: %s", tar_name);
+        send(client_socket, &start_flag, sizeof(int), 0);
+        send_tar_file(tar_name, client_socket);
+    } else {
+        sprintf(response, "No file found");
+        send(client_socket, &start_flag, sizeof(int), 0);
+    }
+
 }
 
 
@@ -610,13 +814,13 @@ void processclient(int client_socket, pid_t pro_id) {
         if (strcmp(command_type, "fgets") == 0) {
             handle_fgets_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "tarfgetz") == 0) {
-            handle_tarfgetz_command(arguments, response, pro_id);
+            handle_tarfgetz_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "filesrch") == 0) {
-            handle_filesrch_command(arguments, response);
+            handle_filesrch_command(arguments, response, client_socket);
         } else if (strcmp(command_type, "targzf") == 0) {
-            handle_targzf_command(arguments, response, pro_id);
+            handle_targzf_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "getdirf") == 0) {
-            handle_getdirf_command(arguments, response);
+            handle_getdirf_command(arguments, response, client_socket);
         } else if (strcmp(command_type, "quit") == 0) {
             // Handle 'quit' command
             char quit_response[] = "Goodbye!";
@@ -629,6 +833,7 @@ void processclient(int client_socket, pid_t pro_id) {
         }
 
         // Send the response back to the client
+        printf("%s", response);
         send(client_socket, response, strlen(response), 0);
     }
 }
@@ -740,8 +945,6 @@ int main(int argc, char *argv[]) {
     while (1) {
         if (client_connections < 6) {
             server_connections(server_sd);
-            printf("forwarding to mirror\n");
-
             client_connections = client_connections + 1;
             //server
         } else if (client_connections < 12) {
