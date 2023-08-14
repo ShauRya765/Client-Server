@@ -32,7 +32,6 @@ int main(int argc, char *argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons((uint16_t) atoi(argv[2]));//Port number
-    printf("%s", argv[1]);
     if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) < 0) {
         fprintf(stderr, " inet_pton() has failed\n");
         exit(2);
@@ -64,7 +63,6 @@ int main(int argc, char *argv[]) {
 
         validate_command(tempCmdArr);
         if (isCmdValid == 1) {
-            printf("\nisCmdValid :: => :: %d\n", isCmdValid);
             send(client_socket, cmdArr, strlen(cmdArr), 0);
             if (strcmp(cmdArr, "quit") == 0) {
                 close(client_socket);
@@ -184,7 +182,7 @@ void validate_getDirf(char *cmd) {
             }
         } else {
             isCmdValid = 0;
-            printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
+            printf("Invalid format, usage: tarfgetz 2023-01-16 2023-03-04 <-u>");
         }
     } else if (sscanf(cmd, "getdirf %10s %10s", date1, date2) == 2) {
         if (is_valid_date(date1) && is_valid_date(date2)) {
@@ -202,6 +200,25 @@ void validate_getDirf(char *cmd) {
     }
 }
 
+void validate_targzf(char *cmd) {
+    char input_exts[4][10]; // Make sure to provide appropriate size
+    char extension_list[4][10] = {"c", "txt", "pdf", "docx"};// Each extension needs its own array
+    int exts = sscanf(cmd, "targzf %9s %9s %9s %9s", input_exts[0], input_exts[1], input_exts[2], input_exts[3]);
+    if (exts >= 1 && exts <= 4) {
+        for (int i = 0; i < exts; i++) {
+            if (strcmp(input_exts[i], extension_list[i]) == 0) {
+                printf("true :: => ::\n");
+                isCmdValid = 1;
+            } else {
+                printf("false :: => ::\n");
+                isCmdValid = 0;
+            }
+        }
+    } else {
+        isCmdValid = 0;
+    }
+}
+
 void validate_command(char *command) {
     char *tempCmd = command;
     if (substrExists(tempCmd, "fgets")) {
@@ -214,6 +231,8 @@ void validate_command(char *command) {
         validate_getDirf(command);
     } else if (substrExists(tempCmd, "quit")) {
         isCmdValid = 1;
+    } else if (substrExists(tempCmd, "targzf")) {
+        validate_targzf(tempCmd);
     } else {
         isCmdValid = 0;
     }
