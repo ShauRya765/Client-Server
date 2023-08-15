@@ -16,9 +16,10 @@
 int isCmdValid = 0;
 
 
-void validate_command(char *command);
+void validate_input_command(char *command);
 
 void receive_tar_file(int socket) {
+    printf("RECIEVE TAR FILE TRue :: => :: %d\n", socket);
     long file_size;
     if (recv(socket, &file_size, sizeof(file_size), 0) == -1) {
         perror("Error receiving file size");
@@ -38,7 +39,7 @@ void receive_tar_file(int socket) {
         return;
     }
 
-    char buffer[file_size];
+    char buffer[BUFFER_SIZE];
     size_t total_bytes_received = 0;
     ssize_t bytes_received;
 
@@ -84,81 +85,86 @@ void receive_response(int socket) {
 
 
 int main(int argc, char *argv[]) {
-    int client_socket;
-    struct sockaddr_in server_addr;
-    struct hostent *server;
+    int client_sock_sd;
+    struct sockaddr_in server_ip;
 
-    // Create socket
-    client_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_socket < 0) {
-        perror("Error creating socket");
+    // Creating client socket
+    client_sock_sd = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_sock_sd < 0) {
+        perror("Error creating socket for client, try again");
         exit(1);
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons((uint16_t) atoi(argv[2]));//Port number
-    printf("%s", argv[1]);
-    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) < 0) {
+    memset(&server_ip, 0, sizeof(server_ip));
+    server_ip.sin_family = AF_INET;
+    server_ip.sin_port = htons((uint16_t) atoi(argv[2]));//Port number
+
+    if (inet_pton(AF_INET, argv[1], &server_ip.sin_addr) < 0) {
         fprintf(stderr, " inet_pton() has failed\n");
         exit(2);
     }
 
-    // Connect to the server
-    if (connect(client_socket, (struct sockaddrnano *) &server_addr, sizeof(server_addr)) < 0) {//Connect()
-        perror("Error connecting to server");
-        close(client_socket);
+    // Connecting to the server using server ip
+    if (connect(client_sock_sd, (struct sockaddr *) &server_ip, sizeof(server_ip)) < 0) {//Connect()
+        perror("Error connecting to server, try again");
+        close(client_sock_sd);
         exit(3);
     }
 
-    char command[BUFFER_SIZE];
-    int is_valid;
-
+    // Infinite loop to run commands
     while (1) {
-        // Read command from the user
-        char cmdArr[1024];
+        char cmdArr[BUFFER_SIZE];        // Reading command from the user
         printf("\nEnter Command:\n");
         fgets(cmdArr, sizeof(cmdArr), stdin);
+
         // Remove the newline character from the end of the input
         size_t input_length = strlen(cmdArr);
         if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
             cmdArr[input_length - 1] = '\0';
         }
 
-        char tempCmdArr[1024];
+        char tempCmdArr[BUFFER_SIZE];
         strcpy(tempCmdArr, cmdArr);
 
-        validate_command(tempCmdArr);
+        // validating input command using validate_input_command function
+        validate_input_command(tempCmdArr);
+
+        // check if input command is valid or not according to given requirements
         if (isCmdValid == 1) {
             printf("\nisCmdValid :: => :: %d\n", isCmdValid);
-            send(client_socket, cmdArr, strlen(cmdArr), 0);
+
+            // sending the command to server socket
+            send(client_sock_sd, cmdArr, strlen(cmdArr), 0);
+
+            // checking if input cmd is quit or not
             if (strcmp(cmdArr, "quit") == 0) {
-                close(client_socket);
+                close(client_sock_sd);
                 break;
             }
+
             printf("Message from the server:\n\n");
 
             // Receive the flag from the server
             int flag;
-            recv(client_socket, &flag, sizeof(int), 0);
-            printf("%d\n",flag);
+            recv(client_sock_sd, &flag, sizeof(int), 0);
+            printf("%d\n", flag);
 
             if (flag == 1) {
-                receive_tar_file(client_socket);
+                receive_tar_file(client_sock_sd);
             }
 
+            // Receiving response from server
             printf("printing response:\n");
             char server_response[1024];
-            recv(client_socket, server_response, sizeof(server_response)-1, 0);
+            recv(client_sock_sd, server_response, sizeof(server_response) - 1, 0);
             printf("%s", server_response);
-
         } else {
             printf("\ncommand is not valid\n");
         }
     }
 }
 
-
+// function to count number of extensions
 int checkInputCmd(char *command) {
     int fileCount = 0;
     char *token = strtok(command, " ");
@@ -169,6 +175,7 @@ int checkInputCmd(char *command) {
     return fileCount;
 }
 
+// function to check is substring is present in the string or not
 int substrExists(const char *command, const char *substring) {
     int commandLen = strlen(command);       // Length of the command string
     int substringLen = strlen(substring);   // Length of the substring to be found
@@ -191,9 +198,9 @@ int substrExists(const char *command, const char *substring) {
     return 0; // Return 0 to indicate that the substring does not exist in the command
 }
 
+// function to validate fgets cmd
 void validate_fGets(char *cmd) {
     int c = checkInputCmd(cmd);
-    printf("%d\n", c);
     if (c <= 5) {
         isCmdValid = 1;
     } else {
@@ -201,6 +208,7 @@ void validate_fGets(char *cmd) {
     }
 }
 
+// function to validate tarfgets cmd
 void validate_tarGets(char *cmd) {
     int size1, size2;
     char flag[5];
@@ -226,6 +234,7 @@ void validate_tarGets(char *cmd) {
     }
 }
 
+// function to validate date
 bool is_valid_date(const char *date) {
     // Check for valid format (YYYY-MM-DD)
     if (strlen(date) != 10 || date[4] != '-' || date[7] != '-') {
@@ -241,11 +250,35 @@ bool is_valid_date(const char *date) {
             return false;
         }
     }
+    // Parse the year, month, and day from the date string
+    int year = atoi(date);
+    int month = atoi(date + 5);
+    int day = atoi(date + 8);
+
+    // Check if the parsed values are within valid ranges
+    if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) {
+        return 0;
+    }
+
+    // Additional checks for specific months with fewer days
+    if ((month == 4 || month == 6 || month == 9 || month == 11) && day > 30) {
+        return 0;
+    }
+
+    // Check for February with leap year
+    if (month == 2) {
+        int is_leap_year = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        if ((is_leap_year && day > 29) || (!is_leap_year && day > 28)) {
+            return 0;
+        }
+    }
+
     // Additional validation logic can be added here if needed
 
     return true;
 }
 
+// function to validate getdirf cmd
 void validate_getDirf(char *cmd) {
     char date1[11], date2[11]; // Room for YYYY-MM-DD and null-terminator
     char flag[5];
@@ -280,10 +313,11 @@ void validate_getDirf(char *cmd) {
     }
 }
 
-void validate_command(char *command) {
-    char *tempCmd = command;
+// function to validate input cmds
+void validate_input_command(char *input_cmd) {
+    char *tempCmd = input_cmd;
     if (substrExists(tempCmd, "fgets")) {
-        validate_fGets(command);
+        validate_fGets(input_cmd);
     } else if (substrExists(tempCmd, "tarfgetz")) {
         validate_tarGets(tempCmd);
     } else if (substrExists(tempCmd, "filesrch")) {
@@ -291,7 +325,7 @@ void validate_command(char *command) {
     } else if (substrExists(tempCmd, "targzf")) {
         isCmdValid = 1;
     } else if (substrExists(tempCmd, "getdirf")) {
-        validate_getDirf(command);
+        validate_getDirf(input_cmd);
     } else if (substrExists(tempCmd, "quit")) {
         isCmdValid = 1;
     } else {
