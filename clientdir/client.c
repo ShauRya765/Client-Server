@@ -12,62 +12,50 @@
 #include <fcntl.h>
 
 #define PORT 9003
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
 int isCmdValid = 0;
 
 
 void validate_input_command(char *command);
 
 void receive_tar_file(int socket) {
-    printf("RECIEVE TAR FILE TRue :: => :: %d\n", socket);
-    long file_size;
-    if (recv(socket, &file_size, sizeof(file_size), 0) == -1) {
+    char buffer[BUFFER_SIZE];
+    int bytes_received = 0;
+    int total_received = 0;
+
+    int file_size;
+    if (recv(socket, &file_size, sizeof(file_size), 0) <= 0) {
         perror("Error receiving file size");
         return;
     }
 
-    printf("%ld\n", file_size);
-
-    if (file_size == 0) {
-        printf("No file to receive.\n");
+    FILE *fp = fopen("received.tar.gz", "wb");
+    if (fp == NULL) {
+        perror("Error opening file");
         return;
     }
 
-    FILE *file = fopen("received.tar.gz", "wb");
-    if (file == NULL) {
-        perror("Error opening destination file");
-        return;
-    }
-
-    char buffer[BUFFER_SIZE];
-    size_t total_bytes_received = 0;
-    ssize_t bytes_received;
-
-    while (total_bytes_received < file_size) {
-        bytes_received = recv(socket, buffer, sizeof(buffer), 0);
+    while (total_received < file_size) {
+        bytes_received = recv(socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received <= 0) {
-            if (bytes_received == 0) {
-                printf("Connection closed by the server.\n");
-            } else {
-                perror("Error receiving file data");
-            }
-            break;
+            perror("Error in recv");
+            fclose(fp);
+            return;
         }
 
-        size_t bytes_written = fwrite(buffer, 1, bytes_received, file);
-        if (bytes_written < bytes_received) {
-            perror("Error writing to file");
-            break;
-        }
-
-        total_bytes_received += bytes_written;
+        fwrite(buffer, 1, bytes_received, fp);
+        total_received += bytes_received;
     }
 
-    if (fclose(file) == EOF) {
-        perror("Error closing destination file");
-    } else {
-        printf("File received and saved as 'received.tar.gz'.\n");
-    }
+    fclose(fp);
+
+    // Extract the received tar.gz file
+//    int extraction_result = extract_tar_gz(filename);
+//    if (extraction_result == 0) {
+//        printf("File extracted successfully.\n");
+//    } else {
+//        printf("File extraction failed.\n");
+//    }
 }
 
 void receive_response(int socket) {
@@ -113,55 +101,140 @@ int main(int argc, char *argv[]) {
 
     // Infinite loop to run commands
     while (1) {
-        char cmdArr[BUFFER_SIZE];        // Reading command from the user
-        printf("\nEnter Command:\n");
-        fgets(cmdArr, sizeof(cmdArr), stdin);
+        int isMirror;
+        int client_mirror_sd;
 
-        // Remove the newline character from the end of the input
-        size_t input_length = strlen(cmdArr);
-        if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
-            cmdArr[input_length - 1] = '\0';
-        }
+        recv(client_sock_sd, &isMirror, sizeof(isMirror), 0);
+        if (isMirror == 1) {
+            close(client_sock_sd);
+            printf("true :: => :: %d\n", isMirror);
+            struct sockaddr_in mirror_server_ip;
 
-        char tempCmdArr[BUFFER_SIZE];
-        strcpy(tempCmdArr, cmdArr);
-
-        // validating input command using validate_input_command function
-        validate_input_command(tempCmdArr);
-
-        // check if input command is valid or not according to given requirements
-        if (isCmdValid == 1) {
-            printf("\nisCmdValid :: => :: %d\n", isCmdValid);
-
-            // sending the command to server socket
-            send(client_sock_sd, cmdArr, strlen(cmdArr), 0);
-
-            // checking if input cmd is quit or not
-            if (strcmp(cmdArr, "quit") == 0) {
-                close(client_sock_sd);
-                break;
+            // Creating client socket
+            client_mirror_sd = socket(AF_INET, SOCK_STREAM, 0);
+            if (client_mirror_sd < 0) {
+                perror("Error creating socket for client, try again");
+                exit(1);
             }
 
-            printf("Message from the server:\n\n");
+            memset(&mirror_server_ip, 0, sizeof(mirror_server_ip));
+            mirror_server_ip.sin_family = AF_INET;
+            mirror_server_ip.sin_port = htons((uint16_t) atoi(argv[3]));//Port number
 
-            // Receive the flag from the server
-            int flag;
-            recv(client_sock_sd, &flag, sizeof(int), 0);
-            printf("%d\n", flag);
-
-            if (flag == 1) {
-                receive_tar_file(client_sock_sd);
+            if (inet_pton(AF_INET, argv[1], &mirror_server_ip.sin_addr) < 0) {
+                fprintf(stderr, " inet_pton() has failed\n");
+                exit(2);
             }
 
-            // Receiving response from server
-            printf("printing response:\n");
-            char server_response[1024];
-            recv(client_sock_sd, server_response, sizeof(server_response) - 1, 0);
-            printf("%s", server_response);
+            // Connecting to the server using server ip
+            if (connect(client_mirror_sd, (struct sockaddr *) &mirror_server_ip, sizeof(mirror_server_ip)) <
+                0) {//Connect()
+                perror("Error connecting to server, try again");
+                close(client_mirror_sd);
+                exit(3);
+            }
+            char cmdArr[BUFFER_SIZE];        // Reading command from the user
+            printf("\nEnter Command:\n");
+            fgets(cmdArr, sizeof(cmdArr), stdin);
+
+            // Remove the newline character from the end of the input
+            size_t input_length = strlen(cmdArr);
+            if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
+                cmdArr[input_length - 1] = '\0';
+            }
+
+            char tempCmdArr[BUFFER_SIZE];
+            strcpy(tempCmdArr, cmdArr);
+
+            // validating input command using validate_input_command function
+            validate_input_command(tempCmdArr);
+
+            // check if input command is valid or not according to given requirements
+            if (isCmdValid == 1) {
+                printf("\nisCmdValid :: => :: %d\n", isCmdValid);
+
+                // sending the command to server socket
+                send(client_mirror_sd, cmdArr, strlen(cmdArr), 0);
+
+                // checking if input cmd is quit or not
+                if (strcmp(cmdArr, "quit") == 0) {
+                    close(client_mirror_sd);
+                    break;
+                }
+
+                printf("Message from the server:\n\n");
+
+                // Receive the flag from the server
+                int flag;
+                recv(client_mirror_sd, &flag, sizeof(int), 0);
+                printf("%d\n", flag);
+
+                if (flag == 1) {
+                    receive_tar_file(client_mirror_sd);
+                }
+
+                // Receiving response from server
+                printf("printing response:\n");
+                // Receiving response from server
+                char server_response[BUFFER_SIZE];
+                recv(client_mirror_sd, server_response, sizeof(server_response) , 0);
+                printf("%s", server_response);
+            } else {
+                printf("\ncommand is not valid\n");
+            }
         } else {
-            printf("\ncommand is not valid\n");
+            char cmdArr[BUFFER_SIZE];        // Reading command from the user
+            printf("\nEnter Command:\n");
+            fgets(cmdArr, sizeof(cmdArr), stdin);
+
+            // Remove the newline character from the end of the input
+            size_t input_length = strlen(cmdArr);
+            if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
+                cmdArr[input_length - 1] = '\0';
+            }
+
+            char tempCmdArr[BUFFER_SIZE];
+            strcpy(tempCmdArr, cmdArr);
+
+            // validating input command using validate_input_command function
+            validate_input_command(tempCmdArr);
+
+            // check if input command is valid or not according to given requirements
+            if (isCmdValid == 1) {
+                printf("\nisCmdValid :: => :: %d\n", isCmdValid);
+
+                // sending the command to server socket
+                send(client_sock_sd, cmdArr, strlen(cmdArr), 0);
+
+                // checking if input cmd is quit or not
+                if (strcmp(cmdArr, "quit") == 0) {
+                    close(client_sock_sd);
+                    break;
+                }
+
+                printf("Message from the server:\n\n");
+
+                // Receive the flag from the server
+                int flag;
+                recv(client_sock_sd, &flag, sizeof(int), 0);
+                printf("%d\n", flag);
+
+                if (flag == 1) {
+                    receive_tar_file(client_sock_sd);
+                }
+
+                // Receiving response from server
+                printf("printing response:\n");
+                // Receiving response from server
+                char server_response[1024];
+                recv(client_sock_sd, server_response, sizeof(server_response) - 1, 0);
+                printf("%s", server_response);
+            } else {
+                printf("\ncommand is not valid\n");
+            }
         }
     }
+
 }
 
 // function to count number of extensions

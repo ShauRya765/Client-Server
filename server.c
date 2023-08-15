@@ -18,7 +18,7 @@
 #include <limits.h>
 
 #define PORT 9002
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
 #define FILE_TRANSFER_PORT 9003
 
 struct tar_header {
@@ -315,7 +315,11 @@ void send_tar_file(const char *file_path, int socket) {
 
     char buffer[file_size];
     size_t bytes_read;
+    printf("buffer from server :: => :: %s\n", buffer);
     while ((bytes_read = fread(buffer, 1, file_size, file)) > 0) {
+        printf("bytes_read :: => ::%zu\n", bytes_read);
+        printf("socket :: => ::%d\n", socket);
+        printf("buffer from server :: => :: %s\n", buffer);
         if (send(socket, buffer, bytes_read, 0) == -1) {
             perror("Error sending TAR file");
             break;
@@ -374,6 +378,7 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
             sprintf(response, "Tar archive created: %s", tar_name);
             send(client_socket, &start_flag, sizeof(int), 0);
             send_tar_file(tar_name, client_socket);
+
         } else {
             send(client_socket, &start_flag, sizeof(int), 0);
             sprintf(response, "No file found");
@@ -845,7 +850,8 @@ void server_connections(int server_socket) {
         perror("Error accepting client connection");
     }
     pid_t child_pid;
-
+    int isMirror = 0;
+    send(client_socket, &isMirror, sizeof(isMirror), 0);
     // Fork a child process to handle the client request
     child_pid = fork();
     if (child_pid < 0) {
@@ -863,52 +869,10 @@ void server_connections(int server_socket) {
 
 void route_forward(char *mirror_ip, int mirror_port, int server_sd) {
     int client_sd = accept(server_sd, (struct sockaddr *) NULL, NULL);
+    int isMirror = 1;
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        int server_mirror_sd;
-        struct sockaddr_in mirror_addr;
-        server_mirror_sd = socket(AF_INET, SOCK_STREAM, 0);
-
-        memset(&mirror_addr, 0, sizeof(mirror_addr));
-        mirror_addr.sin_family = AF_INET;
-        mirror_addr.sin_port = htons((uint16_t) mirror_port);//Port number
-
-        if (inet_pton(AF_INET, mirror_ip, &mirror_addr.sin_addr) < 0) {
-            fprintf(stderr, " inet_pton() has failed\n");
-            exit(2);
-        }
-
-        // Connect to the server
-        if (connect(server_mirror_sd, (struct sockaddrnano *) &mirror_addr, sizeof(mirror_addr)) < 0) {//Connect()
-            perror("Error connecting to server");
-            close(server_mirror_sd);
-            exit(3);
-        }
-        printf("client_Sd :: => :: %d\n", client_sd);
-        printf("server_sd :: => :: %d\n", server_sd);
-        printf("server_mirror_sd :: => :: %d\n", server_mirror_sd);
-        pid_t child_pid = getpid();
-        printf("child_pid :: => :: %d\n", child_pid);
-        printf("parent pid :: => :: %d\n", getpgid(child_pid));
-        while (1) {
-            char client_input[1024];
-            char mirror_output[1024];
-            recv(client_sd, client_input, sizeof(client_input), 0);
-            printf("client_input :: => :: %s\n", client_input);
-            send(server_mirror_sd, client_input, strlen(client_input), 0);
-            if (strcmp(client_input, "quit") == 0) {
-                printf("quit\n");
-                close(server_mirror_sd);
-                kill(child_pid, 0);
-                exit(0);
-            }
-            recv(server_mirror_sd, mirror_output, sizeof(mirror_output), 0);
-            send(client_sd, mirror_output, strlen(mirror_output), 0);
-            memset(client_input, 0, sizeof(client_input));
-        }
-    } else {
-    }
+    send(client_sd, &isMirror, sizeof(isMirror), 0);
+//    close(client_sd);
 }
 
 int main(int argc, char *argv[]) {
@@ -945,7 +909,8 @@ int main(int argc, char *argv[]) {
     int client_connections = 0;
     while (1) {
         if (client_connections < 6) {
-            server_connections(server_sd);
+//            server_connections(server_sd);
+            route_forward(argv[2], atoi(argv[3]), server_sd);
             client_connections = client_connections + 1;
             //server
         } else if (client_connections < 12) {
