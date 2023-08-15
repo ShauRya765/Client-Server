@@ -199,13 +199,13 @@ int validate_command(char *command) {
 // -------------------------- handle_fgets_command ------------------------
 
 // Function to add a file to a tar archive
-int add_file_to_tar(const char *tar_filename, const char *file_path, int *flag, char *response) {
+void add_file_to_tar(const char *tar_filename, const char *file_path, int *flag, char *response) {
     char command[256];
     snprintf(command, sizeof(command), "tar --append --file=%s %s", tar_filename, file_path);
     if (system(command) != 0) {
         sprintf(response, "Error creating TAR archive");
         printf("file not found");
-        *flag=0;
+        *flag = 0;
         return;
     }
 }
@@ -232,7 +232,7 @@ void search_and_add_file(const char *current_directory, const char *target_file,
         if (stat(file_path, &file_stat) != 0) {
             fprintf(stderr, "File '%s' not found: %s\n", file_path, strerror(errno));
             printf("not found");
-            *flag=0;
+            *flag = 0;
             continue;
         }
 
@@ -294,6 +294,8 @@ void search_files(const char *files[], int num_files, const char *tar_name, int 
 // }
 
 void send_tar_file(const char *file_path, int socket) {
+    printf("file_path :: => :: %s\n", file_path);
+    printf("socket :: => :: %d\n", socket);
     FILE *file = fopen(file_path, "rb");
     if (file == NULL) {
         perror("Error opening TAR file");
@@ -310,10 +312,9 @@ void send_tar_file(const char *file_path, int socket) {
         return;
     }
     printf("%ld\n", file_size);
-    
+
     char buffer[file_size];
     size_t bytes_read;
-
     while ((bytes_read = fread(buffer, 1, file_size, file)) > 0) {
         if (send(socket, buffer, bytes_read, 0) == -1) {
             perror("Error sending TAR file");
@@ -364,12 +365,12 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
 
         // Check if the file exists
         if (access(tar_name, F_OK) != -1) {
-            start_flag=1;
+            start_flag = 1;
         } else {
-            start_flag=0;
+            start_flag = 0;
         }
 
-        if (start_flag == 1){
+        if (start_flag == 1) {
             sprintf(response, "Tar archive created: %s", tar_name);
             send(client_socket, &start_flag, sizeof(int), 0);
             send_tar_file(tar_name, client_socket);
@@ -377,14 +378,14 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
             send(client_socket, &start_flag, sizeof(int), 0);
             sprintf(response, "No file found");
         }
-        
-       
+
+
     }
 }
 
 // ----------------------------handle_tarfgetz_command------------------------------------
 
-void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int client_socket ) {
+void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated arguments
     char *size1_str = strtok(arguments, " ");
     char *size2_str = strtok(NULL, " ");
@@ -466,7 +467,7 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int 
         printf("not found");
         send(client_socket, &start_flag, sizeof(int), 0);
         return;
-    } 
+    }
 
     // Close the file
     fclose(file);
@@ -492,7 +493,7 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int 
         // send_tar_file(tar_name, client_socket);
     }
 
-    if (start_flag == 1){
+    if (start_flag == 1) {
         sprintf(response, "Tar archive created: %s", tar_name);
         printf("sending response...\n");
         send(client_socket, &start_flag, sizeof(int), 0);
@@ -693,7 +694,7 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id, int cl
         // send_tar_file(tar_name, client_socket);
     }
 
-    if (start_flag == 1){
+    if (start_flag == 1) {
         sprintf(response, "Tar archive created: %s", tar_name);
         send(client_socket, &start_flag, sizeof(int), 0);
         send_tar_file(tar_name, client_socket);
@@ -770,7 +771,7 @@ void handle_getdirf_command(char *arguments, char *response, int client_socket) 
         // send_tar_file(tar_name, client_socket);
     }
 
-    if (start_flag == 1){
+    if (start_flag == 1) {
         sprintf(response, "Tar archive created: %s", tar_name);
         send(client_socket, &start_flag, sizeof(int), 0);
         send_tar_file(tar_name, client_socket);

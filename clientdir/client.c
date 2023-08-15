@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
     if (client_socket < 0) {
         perror("Error creating socket");
         exit(1);
-    } 
+    }
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -137,15 +137,15 @@ int main(int argc, char *argv[]) {
                 break;
             }
             printf("Message from the server:\n\n");
-            
+
             // Receive the flag from the server
             int flag;
             recv(client_socket, &flag, sizeof(int), 0);
             printf("%d\n",flag);
 
-             if (flag == 1) {
-                receive_tar_file(client_socket);               
-             }
+            if (flag == 1) {
+                receive_tar_file(client_socket);
+            }
 
             printf("printing response:\n");
             char server_response[1024];
