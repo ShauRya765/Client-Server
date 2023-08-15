@@ -34,9 +34,13 @@ void receive_tar_file(int socket) {
         perror("Error opening file");
         return;
     }
+    printf("%d\n", file_size);
 
     while (total_received < file_size) {
-        bytes_received = recv(socket, buffer, BUFFER_SIZE, 0);
+        int remaining_bytes = file_size - total_received;
+        int chunk_size = remaining_bytes < BUFFER_SIZE ? remaining_bytes : BUFFER_SIZE;
+
+        bytes_received = recv(socket, buffer, chunk_size, 0);
         if (bytes_received <= 0) {
             perror("Error in recv");
             fclose(fp);
@@ -46,17 +50,18 @@ void receive_tar_file(int socket) {
         fwrite(buffer, 1, bytes_received, fp);
         total_received += bytes_received;
     }
-
+    printf("%d\n", total_received);
     fclose(fp);
 
     // Extract the received tar.gz file
-//    int extraction_result = extract_tar_gz(filename);
-//    if (extraction_result == 0) {
-//        printf("File extracted successfully.\n");
-//    } else {
-//        printf("File extraction failed.\n");
-//    }
+    // int extraction_result = extract_tar_gz(filename);
+    // if (extraction_result == 0) {
+    //     printf("File extracted successfully.\n");
+    // } else {
+    //     printf("File extraction failed.\n");
+    // }
 }
+
 
 void receive_response(int socket) {
     char response[BUFFER_SIZE];
@@ -166,19 +171,21 @@ int main(int argc, char *argv[]) {
 
                 // Receive the flag from the server
                 int flag;
-                recv(client_mirror_sd, &flag, sizeof(int), 0);
+                recv(client_mirror_sd, &flag, sizeof(flag), 0);
                 printf("%d\n", flag);
 
                 if (flag == 1) {
                     receive_tar_file(client_mirror_sd);
+                } else {
+                    char server_response[BUFFER_SIZE];
+                    recv(client_mirror_sd, server_response, sizeof(server_response) , 0);
+                    printf("%s", server_response);
                 }
 
                 // Receiving response from server
                 printf("printing response:\n");
                 // Receiving response from server
-                char server_response[BUFFER_SIZE];
-                recv(client_mirror_sd, server_response, sizeof(server_response) , 0);
-                printf("%s", server_response);
+                
             } else {
                 printf("\ncommand is not valid\n");
             }
@@ -216,7 +223,7 @@ int main(int argc, char *argv[]) {
 
                 // Receive the flag from the server
                 int flag;
-                recv(client_sock_sd, &flag, sizeof(int), 0);
+                recv(client_sock_sd, &flag, sizeof(flag), 0);
                 printf("%d\n", flag);
 
                 if (flag == 1) {

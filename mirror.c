@@ -294,40 +294,39 @@ void search_files(const char *files[], int num_files, const char *tar_name, int 
 // }
 
 void send_tar_file(const char *file_path, int socket) {
-    printf("file_path :: => :: %s\n", file_path);
-    printf("socket :: => :: %d\n", socket);
-    FILE *file = fopen(file_path, "rb");
-    if (file == NULL) {
-        perror("Error opening TAR file");
+    char buffer[2048];
+    FILE *fp = fopen(file_path, "r");
+    if (fp == NULL) {
+        perror("Cannot open file to send");
         return;
     }
 
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    // Get the size of the file.
+    fseek(fp, 0, SEEK_END);
+    int file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
 
-    if (send(socket, &file_size, sizeof(file_size), 0) == -1) {
-        perror("Error sending file size");
-        fclose(file);
+
+    // Send file size.
+    if(send(socket, &file_size, sizeof(file_size), 0) < 0) {
+        perror("Send file size failed");
+        fclose(fp);
         return;
     }
-    printf("%ld\n", file_size);
 
-    char buffer[file_size];
-    size_t bytes_read;
-    printf("buffer from server :: => :: %s\n", buffer);
-    while ((bytes_read = fread(buffer, 1, file_size, file)) > 0) {
-        printf("bytes_read :: => ::%zu\n", bytes_read);
-        printf("socket :: => ::%d\n", socket);
-        printf("buffer from server :: => :: %s\n", buffer);
-        if (send(socket, buffer, bytes_read, 0) == -1) {
-            perror("Error sending TAR file");
-            break;
+    while (!feof(fp)) {
+        size_t read_size = fread(buffer, 1, sizeof(buffer), fp);
+        if (read_size > 0) {
+            if(send(socket, buffer, read_size, 0) < 0) {
+                perror("Send failed");
+                break;
+            }
         }
     }
 
-    fclose(file);
+    fclose(fp);
 }
+
 
 void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated file names from the arguments
