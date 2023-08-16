@@ -308,7 +308,7 @@ void send_tar_file(const char *file_path, int socket) {
 
 
     // Send file size.
-    if(send(socket, &file_size, sizeof(file_size), 0) < 0) {
+    if (send(socket, &file_size, sizeof(file_size), 0) < 0) {
         perror("Send file size failed");
         fclose(fp);
         return;
@@ -317,7 +317,7 @@ void send_tar_file(const char *file_path, int socket) {
     while (!feof(fp)) {
         size_t read_size = fread(buffer, 1, sizeof(buffer), fp);
         if (read_size > 0) {
-            if(send(socket, buffer, read_size, 0) < 0) {
+            if (send(socket, buffer, read_size, 0) < 0) {
                 perror("Send failed");
                 break;
             }
@@ -325,6 +325,8 @@ void send_tar_file(const char *file_path, int socket) {
     }
 
     fclose(fp);
+    memset(buffer, 0, sizeof(buffer));
+
 }
 
 
@@ -374,8 +376,9 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
         }
 
         if (start_flag == 1) {
+            int flag = 1;
             sprintf(response, "Tar archive created: %s", tar_name);
-            send(client_socket, &start_flag, sizeof(int), 0);
+            send(client_socket, &flag, sizeof(int), 0);
             send_tar_file(tar_name, client_socket);
             send(client_socket, response, strlen(response), 0);
         } else {
@@ -830,6 +833,7 @@ void processclient(int client_socket, pid_t pro_id) {
             // Handle 'quit' command
             char quit_response[] = "Goodbye!";
             send(client_socket, quit_response, strlen(quit_response), 0);
+            kill(pro_id, 0);
             break;
         } else {
             // Invalid command
@@ -840,6 +844,7 @@ void processclient(int client_socket, pid_t pro_id) {
         // Send the response back to the client
         printf("%s", response);
         send(client_socket, response, strlen(response), 0);
+        memset(response, 0, sizeof(response));
     }
 }
 

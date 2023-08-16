@@ -53,6 +53,7 @@ void receive_tar_file(int socket) {
     printf("%d\n", total_received);
     fclose(fp);
 
+    memset(buffer, 0, sizeof(buffer));
     // Extract the received tar.gz file
     // int extraction_result = extract_tar_gz(filename);
     // if (extraction_result == 0) {
@@ -103,13 +104,12 @@ int main(int argc, char *argv[]) {
         close(client_sock_sd);
         exit(3);
     }
+    int isMirror;
+    recv(client_sock_sd, &isMirror, sizeof(isMirror), 0);
 
     // Infinite loop to run commands
     while (1) {
-        int isMirror;
         int client_mirror_sd;
-
-        recv(client_sock_sd, &isMirror, sizeof(isMirror), 0);
         if (isMirror == 1) {
             close(client_sock_sd);
             printf("true :: => :: %d\n", isMirror);
@@ -156,8 +156,6 @@ int main(int argc, char *argv[]) {
 
             // check if input command is valid or not according to given requirements
             if (isCmdValid == 1) {
-                printf("\nisCmdValid :: => :: %d\n", isCmdValid);
-
                 // sending the command to server socket
                 send(client_mirror_sd, cmdArr, strlen(cmdArr), 0);
 
@@ -172,20 +170,16 @@ int main(int argc, char *argv[]) {
                 // Receive the flag from the server
                 int flag;
                 recv(client_mirror_sd, &flag, sizeof(flag), 0);
-                printf("%d\n", flag);
+                printf("flag :: => :: %d\n", flag);
 
                 if (flag == 1) {
                     receive_tar_file(client_mirror_sd);
                 } else {
                     char server_response[BUFFER_SIZE];
-                    recv(client_mirror_sd, server_response, sizeof(server_response) , 0);
+                    recv(client_mirror_sd, server_response, sizeof(server_response), 0);
                     printf("%s", server_response);
+                    memset(server_response, 0, sizeof(server_response));
                 }
-
-                // Receiving response from server
-                printf("printing response:\n");
-                // Receiving response from server
-                
             } else {
                 printf("\ncommand is not valid\n");
             }
@@ -193,7 +187,7 @@ int main(int argc, char *argv[]) {
             char cmdArr[BUFFER_SIZE];        // Reading command from the user
             printf("\nEnter Command:\n");
             fgets(cmdArr, sizeof(cmdArr), stdin);
-
+            printf("server true :: => :: ");
             // Remove the newline character from the end of the input
             size_t input_length = strlen(cmdArr);
             if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
@@ -206,10 +200,8 @@ int main(int argc, char *argv[]) {
             // validating input command using validate_input_command function
             validate_input_command(tempCmdArr);
 
-            // check if input command is valid or not according to given requirements
+            /// check if input command is valid or not according to given requirements
             if (isCmdValid == 1) {
-                printf("\nisCmdValid :: => :: %d\n", isCmdValid);
-
                 // sending the command to server socket
                 send(client_sock_sd, cmdArr, strlen(cmdArr), 0);
 
@@ -224,24 +216,21 @@ int main(int argc, char *argv[]) {
                 // Receive the flag from the server
                 int flag;
                 recv(client_sock_sd, &flag, sizeof(flag), 0);
-                printf("%d\n", flag);
+                printf("flag :: => :: %d\n", flag);
 
                 if (flag == 1) {
                     receive_tar_file(client_sock_sd);
+                } else {
+                    char server_response[BUFFER_SIZE];
+                    recv(client_sock_sd, server_response, sizeof(server_response), 0);
+                    printf("%s", server_response);
+                    memset(server_response, 0, sizeof(server_response));
                 }
-
-                // Receiving response from server
-                printf("printing response:\n");
-                // Receiving response from server
-                char server_response[1024];
-                recv(client_sock_sd, server_response, sizeof(server_response) - 1, 0);
-                printf("%s", server_response);
             } else {
                 printf("\ncommand is not valid\n");
             }
         }
     }
-
 }
 
 // function to count number of extensions

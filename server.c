@@ -21,6 +21,8 @@
 #define BUFFER_SIZE 2048
 #define FILE_TRANSFER_PORT 9003
 
+int isMirror = 1;
+
 struct tar_header {
     char name[100];
     char mode[8];
@@ -831,6 +833,7 @@ void processclient(int client_socket, pid_t pro_id) {
             // Handle 'quit' command
             char quit_response[] = "Goodbye!";
             send(client_socket, quit_response, strlen(quit_response), 0);
+            kill(pro_id, 0);
             break;
         } else {
             // Invalid command
@@ -850,7 +853,7 @@ void server_connections(int server_socket) {
         perror("Error accepting client connection");
     }
     pid_t child_pid;
-    int isMirror = 0;
+    isMirror = 0;
     send(client_socket, &isMirror, sizeof(isMirror), 0);
     // Fork a child process to handle the client request
     child_pid = fork();
@@ -869,7 +872,7 @@ void server_connections(int server_socket) {
 
 void route_forward(char *mirror_ip, int mirror_port, int server_sd) {
     int client_sd = accept(server_sd, (struct sockaddr *) NULL, NULL);
-    int isMirror = 1;
+    isMirror = 1;
 
     send(client_sd, &isMirror, sizeof(isMirror), 0);
 //    close(client_sd);
