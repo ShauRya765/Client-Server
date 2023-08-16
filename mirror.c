@@ -1,3 +1,6 @@
+//Section# 2 | 110094989 | Shaurya Sharma
+
+//Section# 2 | 110096129 | Harshil Hitendrabhai Panchal
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,188 +18,15 @@
 #include <time.h>
 #include <arpa/inet.h>
 #include <signal.h>
-#include <limits.h>
 
 #define PORT 9002
 #define BUFFER_SIZE 2048
+#define PATH_MAX 10000
 #define FILE_TRANSFER_PORT 9003
 
-struct tar_header {
-    char name[100];
-    char mode[8];
-    char uid[8];
-    char gid[8];
-    char size[12];
-    char mtime[12];
-    char checksum[8];
-    char typeflag[1];
-    char linkname[100];
-    char magic[6];
-    char version[2];
-    char uname[32];
-    char gname[32];
-    char devmajor[8];
-    char devminor[8];
-    char prefix[155];
-    // ...
-};
+void process_client(int client_socket, pid_t pro_id);
 
-void processclient(int client_socket, pid_t pro_id);
-
-
-// Function to transfer a file from server to client
-int transfer_file(int client_socket, const char *filename, int is_upload) {
-
-    // Open the file
-    FILE *file = fopen(filename, "rb");
-    if (file == NULL) {
-        perror("Error opening file");
-        return -1;
-    }
-
-    // Read and send the file data
-    char buffer[BUFFER_SIZE];
-    int bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        send(client_socket, buffer, bytes_read, 0);
-    }
-
-    // Close the file and file transfer socket
-    fclose(file);
-
-    return 0;
-}
-
-// ------------------------------------- validate_command -------------------------------
-
-int is_valid_date_format(const char *date_str) {
-    // Check if the date string is not NULL and has the correct length (10 characters for yyyy-mm-dd)
-    if (date_str == NULL || strlen(date_str) != 10) {
-        return 0;
-    }
-
-    // Check if each character in the date string is a digit or a hyphen
-    for (int i = 0; i < 10; i++) {
-        if (i == 4 || i == 7) {
-            // The 5th and 8th characters should be hyphens
-            if (date_str[i] != '-') {
-                return 0;
-            }
-        } else {
-            // All other characters should be digits
-            if (!isdigit(date_str[i])) {
-                return 0;
-            }
-        }
-    }
-
-    // Parse the year, month, and day from the date string
-    int year = atoi(date_str);
-    int month = atoi(date_str + 5);
-    int day = atoi(date_str + 8);
-
-    // Check if the parsed values are within valid ranges
-    if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) {
-        return 0;
-    }
-
-    // Additional checks for specific months with fewer days
-    if ((month == 4 || month == 6 || month == 9 || month == 11) && day > 30) {
-        return 0;
-    }
-
-    // Check for February with leap year
-    if (month == 2) {
-        int is_leap_year = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-        if ((is_leap_year && day > 29) || (!is_leap_year && day > 28)) {
-            return 0;
-        }
-    }
-
-    // The date format is valid
-    return 1;
-}
-
-
-int validate_command(char *command) {
-    // Tokenize the command to extract the command type and arguments
-    char *command_type = strtok(command, " ");
-    char *arguments = strtok(NULL, "");
-
-    if (strcmp(command_type, "fgets") == 0) {
-        // Check syntax for 'fgets' command: fgets file1 file2 file3 file4
-        // The command must start with 'fgets' followed by at least one filename.
-        if (arguments == NULL) {
-            return 0;
-        }
-    } else if (strcmp(command_type, "tarfgetz") == 0) {
-        // Check syntax for 'tarfgetz' command: tarfgetz size1 size2 <-u>
-        // The command must start with 'tarfgetz' followed by two integers (size1 and size2).
-        // An optional '-u' flag can be included at the end.
-        char *size1_str = strtok(arguments, " ");
-        char *size2_str = strtok(NULL, " ");
-        char *unzip_flag = strtok(NULL, " ");
-        if (size1_str == NULL || size2_str == NULL) {
-            return 0;
-        }
-        int size1 = atoi(size1_str);
-        int size2 = atoi(size2_str);
-        if (size1 < 0 || size2 < 0 || size1 > size2) {
-            return 0;
-        }
-        if (unzip_flag != NULL && strcmp(unzip_flag, "-u") != 0) {
-            return 0;
-        }
-    } else if (strcmp(command_type, "filesrch") == 0) {
-        // Check syntax for 'filesrch' command: filesrch filename
-        // The command must start with 'filesrch' followed by a filename.
-        if (arguments == NULL) {
-            return 0;
-        }
-    } else if (strcmp(command_type, "targzf") == 0) {
-        // Check syntax for 'targzf' command: targzf <extension list> <-u>
-        // The command must start with 'targzf' followed by at least one file extension.
-        // An optional '-u' flag can be included at the end.
-        char *extensions = strtok(arguments, " ");
-        char *unzip_flag = strtok(NULL, " ");
-        if (extensions == NULL) {
-            return 0;
-        }
-        if (unzip_flag != NULL && strcmp(unzip_flag, "-u") != 0) {
-            return 0;
-        }
-    } else if (strcmp(command_type, "getdirf") == 0) {
-        // Check syntax for 'getdirf' command: getdirf date1 date2 <-u>
-        // The command must start with 'getdirf' followed by two dates in yyyy-mm-dd format.
-        // An optional '-u' flag can be included at the end.
-        char *date1 = strtok(arguments, " ");
-        char *date2 = strtok(NULL, " ");
-        char *unzip_flag = strtok(NULL, " ");
-        if (date1 == NULL || date2 == NULL) {
-            return 0;
-        }
-        if (!is_valid_date_format(date1) || !is_valid_date_format(date2)) {
-            return 0;
-        }
-        if (unzip_flag != NULL && strcmp(unzip_flag, "-u") != 0) {
-            return 0;
-        }
-    } else if (strcmp(command_type, "quit") == 0) {
-        // Check syntax for 'quit' command: quit
-        // The command must be exactly 'quit'.
-        if (arguments != NULL) {
-            return 0;
-        }
-    } else {
-        // Invalid command type
-        return 0;
-    }
-
-    // All syntax checks passed, the command is valid
-    return 1;
-}
-
-// -------------------------- handle_fgets_command ------------------------
+// -------------------------- process_fgets_command ------------------------
 
 // Function to add a file to a tar archive
 void add_file_to_tar(const char *tar_filename, const char *file_path, int *flag, char *response) {
@@ -256,43 +86,6 @@ void search_files(const char *files[], int num_files, const char *tar_name, int 
     }
 }
 
-// void send_tar_file(const char *filename, int client_socket) {
-//     int fd = open(filename, O_RDONLY);
-//     if (fd == -1) {
-//         perror("Error opening file");
-//         return;
-//     }
-
-//     struct stat stat_buf;
-//     if (fstat(fd, &stat_buf) != 0) {
-//         perror("Error getting file size");
-//         close(fd);
-//         return;
-//     }
-
-//     // Send the file size to the client
-//     off_t file_size = stat_buf.st_size;
-//     printf("%ld\n", file_size);
-//     if (send(client_socket, &file_size, sizeof(off_t), 0) == -1) {
-//         perror("Error sending file size");
-//         close(fd);
-//         return;
-//     }
-
-//     // Send the file data using the sendfile() function
-//     off_t offset = 0;
-//     ssize_t sent_bytes = sendfile(client_socket, fd, &offset, stat_buf.st_size);
-//     if (sent_bytes == -1) {
-//         perror("Error sending file data");
-//         close(fd);
-//         return;
-//     }
-
-//     printf("Sent %zd bytes of file data\n", sent_bytes);
-
-//     close(fd);
-// }
-
 void send_tar_file(const char *file_path, int socket) {
     char buffer[2048];
     FILE *fp = fopen(file_path, "r");
@@ -330,7 +123,7 @@ void send_tar_file(const char *file_path, int socket) {
 }
 
 
-void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
+void process_fgets_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated file names from the arguments
     char *file_name = strtok(arguments, " ");
     char *files[4]; // Assuming the maximum of 4 files in fgets command
@@ -338,7 +131,6 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
     int start_flag = 1;
 
     while (file_name != NULL && num_files < 4) {
-        printf("%s\n", file_name);
         files[num_files] = file_name;
         num_files++;
         file_name = strtok(NULL, " ");
@@ -390,9 +182,9 @@ void handle_fgets_command(char *arguments, char *response, pid_t pro_id, int cli
     }
 }
 
-// ----------------------------handle_tarfgetz_command------------------------------------
+// ----------------------------process_tarfgetz_command------------------------------------
 
-void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
+void process_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated arguments
     char *size1_str = strtok(arguments, " ");
     char *size2_str = strtok(NULL, " ");
@@ -502,10 +294,8 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int 
 
     if (start_flag == 1) {
         sprintf(response, "Tar archive created: %s", tar_name);
-        printf("sending response...\n");
         send(client_socket, &start_flag, sizeof(int), 0);
         send_tar_file(tar_name, client_socket);
-        printf("sending response...\n");
         return;
     } else {
         sprintf(response, "No files found");
@@ -513,7 +303,7 @@ void handle_tarfgetz_command(char *arguments, char *response, pid_t pro_id, int 
     }
 }
 
-// ---------------------------------handle_filesrch_command---------------------------------
+// ---------------------------------process_filesrch_command---------------------------------
 
 void format_creation_time(time_t ctime, char *formatted_time) {
     struct tm *timeinfo;
@@ -521,7 +311,7 @@ void format_creation_time(time_t ctime, char *formatted_time) {
     strftime(formatted_time, 20, "%b %d %H:%M", timeinfo);
 }
 
-void handle_filesrch_command(char *arguments, char *response, int client_socket) {
+void process_filesrch_command(char *arguments, char *response, int client_socket) {
     // Tokenize the command arguments to get the filename
     int start_flag = 0;
     char *filename = strtok(arguments, " ");
@@ -586,9 +376,9 @@ void handle_filesrch_command(char *arguments, char *response, int client_socket)
     send(client_socket, &start_flag, sizeof(int), 0);
 }
 
-// -------------------------------handle_targzf_command---------------------------------------------
+// -------------------------------process_targzf_command---------------------------------------------
 
-void handle_targzf_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
+void process_targzf_command(char *arguments, char *response, pid_t pro_id, int client_socket) {
     // Tokenize the space-separated arguments
     char *extension_list = strtok(arguments, " ");
     int start_flag = 1;
@@ -712,7 +502,7 @@ void handle_targzf_command(char *arguments, char *response, pid_t pro_id, int cl
 }
 
 
-void handle_getdirf_command(char *arguments, char *response, int client_socket) {
+void process_getdirf_command(char *arguments, char *response, int client_socket) {
     // Tokenize the command arguments
     char *date1 = strtok(arguments, " ");
     char *date2 = strtok(NULL, " ");
@@ -751,7 +541,7 @@ void handle_getdirf_command(char *arguments, char *response, int client_socket) 
     snprintf(tar_name, sizeof(tar_name), "%s/temp.tar.gz", dir_name);
 
     // Use the find command to search for files within the specified date range
-    char find_command[512];
+    char find_command[BUFFER_SIZE];
     snprintf(find_command, sizeof(find_command), "find %s -type f -newermt %s ! -newermt %s > %s/file_list.txt",
              home_dir, date1, date2, dir_name);
 
@@ -763,7 +553,7 @@ void handle_getdirf_command(char *arguments, char *response, int client_socket) 
     }
 
     // Create the TAR archive using the file list
-    char tar_command[512];
+    char tar_command[BUFFER_SIZE];
     snprintf(tar_command, sizeof(tar_command), "tar czf %s -T %s/file_list.txt", tar_name, dir_name);
     if (system(tar_command) != 0) {
         sprintf(response, "Error creating TAR archive");
@@ -789,11 +579,10 @@ void handle_getdirf_command(char *arguments, char *response, int client_socket) 
 
 }
 
-
-void processclient(int client_socket, pid_t pro_id) {
+// process client function to process command from each client in new child process
+void process_client(int client_socket, pid_t pro_id) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
-    printf("%d\n", client_socket);
     while (1) {
         // Receive command from the client
         bytes_received = read(client_socket, buffer, 1024);
@@ -805,13 +594,6 @@ void processclient(int client_socket, pid_t pro_id) {
 
         buffer[bytes_received] = '\0';
 
-        // // Validate the received command syntax
-        // if (!validate_command(buffer)) {
-        //     char response[] = "Invalid command syntax";
-        //     send(client_socket, response, strlen(response), 0);
-        //     continue;
-        // }
-
         // Process the client command and send appropriate responses
         char response[BUFFER_SIZE] = {0};
 
@@ -820,15 +602,15 @@ void processclient(int client_socket, pid_t pro_id) {
         char *arguments = strtok(NULL, "");
 
         if (strcmp(command_type, "fgets") == 0) {
-            handle_fgets_command(arguments, response, pro_id, client_socket);
+            process_fgets_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "tarfgetz") == 0) {
-            handle_tarfgetz_command(arguments, response, pro_id, client_socket);
+            process_tarfgetz_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "filesrch") == 0) {
-            handle_filesrch_command(arguments, response, client_socket);
+            process_filesrch_command(arguments, response, client_socket);
         } else if (strcmp(command_type, "targzf") == 0) {
-            handle_targzf_command(arguments, response, pro_id, client_socket);
+            process_targzf_command(arguments, response, pro_id, client_socket);
         } else if (strcmp(command_type, "getdirf") == 0) {
-            handle_getdirf_command(arguments, response, client_socket);
+            process_getdirf_command(arguments, response, client_socket);
         } else if (strcmp(command_type, "quit") == 0) {
             // Handle 'quit' command
             char quit_response[] = "Goodbye!";
@@ -899,14 +681,10 @@ int main(int argc, char *argv[]) {
         } else if (child_pid == 0) {
             // Child process
             pid_t pid = getpid();
-            printf("child_pid :: => :: %d\n", pid);
-            processclient(client_socket, pid);
+            process_client(client_socket, pid);
         } else {
             // Parent process
             close(client_socket);
         }
     }
-
-    close(server_socket);
-    return 0;
 }

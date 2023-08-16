@@ -1,6 +1,9 @@
-#include <stdio.h>
-#include <stdlib.h>
+//Section# 2 | 110094989 | Shaurya Sharma
+
+//Section# 2 | 110096129 | Harshil Hitendrabhai Panchal
+
 #include <string.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -8,15 +11,28 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <ctype.h>
-#include <fcntl.h>
+#include <stdlib.h>
 
-#define PORT 9003
 #define BUFFER_SIZE 2048
 int isCmdValid = 0;
+int isUnzip = 0;
 
 
-void validate_input_command(char *command);
+void validate_input_cmd(char *command);
+
+int extract_tar_file(char *tar_path_file) {
+    char tar_Cmd[BUFFER_SIZE];
+    snprintf(tar_Cmd, sizeof(tar_Cmd), "tar -xvf %s", tar_path_file);
+    int ret = system(tar_Cmd);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to extract the tar file.\n");
+        return 0;
+    } else {
+        return 1;
+    }
+}
 
 void receive_tar_file(int socket) {
     char buffer[BUFFER_SIZE];
@@ -29,12 +45,11 @@ void receive_tar_file(int socket) {
         return;
     }
 
-    FILE *fp = fopen("received.tar.gz", "wb");
+    FILE *fp = fopen("temp.tar.gz", "wb");
     if (fp == NULL) {
         perror("Error opening file");
         return;
     }
-    printf("%d\n", file_size);
 
     while (total_received < file_size) {
         int remaining_bytes = file_size - total_received;
@@ -50,17 +65,12 @@ void receive_tar_file(int socket) {
         fwrite(buffer, 1, bytes_received, fp);
         total_received += bytes_received;
     }
-    printf("%d\n", total_received);
     fclose(fp);
-
+    printf("Success!!");
     memset(buffer, 0, sizeof(buffer));
-    // Extract the received tar.gz file
-    // int extraction_result = extract_tar_gz(filename);
-    // if (extraction_result == 0) {
-    //     printf("File extracted successfully.\n");
-    // } else {
-    //     printf("File extraction failed.\n");
-    // }
+    if (isUnzip == 1) {
+        extract_tar_file("received.tar.gz");
+    }
 }
 
 
@@ -112,7 +122,6 @@ int main(int argc, char *argv[]) {
         int client_mirror_sd;
         if (isMirror == 1) {
             close(client_sock_sd);
-            printf("true :: => :: %d\n", isMirror);
             struct sockaddr_in mirror_server_ip;
 
             // Creating client socket
@@ -151,8 +160,8 @@ int main(int argc, char *argv[]) {
             char tempCmdArr[BUFFER_SIZE];
             strcpy(tempCmdArr, cmdArr);
 
-            // validating input command using validate_input_command function
-            validate_input_command(tempCmdArr);
+            // validating input command using validate_input_cmd function
+            validate_input_cmd(tempCmdArr);
 
             // check if input command is valid or not according to given requirements
             if (isCmdValid == 1) {
@@ -161,6 +170,10 @@ int main(int argc, char *argv[]) {
 
                 // checking if input cmd is quit or not
                 if (strcmp(cmdArr, "quit") == 0) {
+                    char server_response[BUFFER_SIZE];
+                    recv(client_mirror_sd, server_response, sizeof(server_response), 0);
+                    printf("%s", server_response);
+                    memset(server_response, 0, sizeof(server_response));
                     close(client_mirror_sd);
                     break;
                 }
@@ -170,7 +183,6 @@ int main(int argc, char *argv[]) {
                 // Receive the flag from the server
                 int flag;
                 recv(client_mirror_sd, &flag, sizeof(flag), 0);
-                printf("flag :: => :: %d\n", flag);
 
                 if (flag == 1) {
                     receive_tar_file(client_mirror_sd);
@@ -181,13 +193,13 @@ int main(int argc, char *argv[]) {
                     memset(server_response, 0, sizeof(server_response));
                 }
             } else {
-                printf("\ncommand is not valid\n");
+                printf("\nCommand is not valid\n");
             }
         } else {
             char cmdArr[BUFFER_SIZE];        // Reading command from the user
             printf("\nEnter Command:\n");
             fgets(cmdArr, sizeof(cmdArr), stdin);
-            printf("server true :: => :: ");
+
             // Remove the newline character from the end of the input
             size_t input_length = strlen(cmdArr);
             if (input_length > 0 && cmdArr[input_length - 1] == '\n') {
@@ -197,16 +209,20 @@ int main(int argc, char *argv[]) {
             char tempCmdArr[BUFFER_SIZE];
             strcpy(tempCmdArr, cmdArr);
 
-            // validating input command using validate_input_command function
-            validate_input_command(tempCmdArr);
+            // validating input command using validate_input_cmd function
+            validate_input_cmd(tempCmdArr);
 
-            /// check if input command is valid or not according to given requirements
+            // check if input command is valid or not according to given requirements
             if (isCmdValid == 1) {
                 // sending the command to server socket
                 send(client_sock_sd, cmdArr, strlen(cmdArr), 0);
 
                 // checking if input cmd is quit or not
                 if (strcmp(cmdArr, "quit") == 0) {
+                    char server_response[BUFFER_SIZE];
+                    recv(client_sock_sd, server_response, sizeof(server_response), 0);
+                    printf("%s", server_response);
+                    memset(server_response, 0, sizeof(server_response));
                     close(client_sock_sd);
                     break;
                 }
@@ -216,7 +232,6 @@ int main(int argc, char *argv[]) {
                 // Receive the flag from the server
                 int flag;
                 recv(client_sock_sd, &flag, sizeof(flag), 0);
-                printf("flag :: => :: %d\n", flag);
 
                 if (flag == 1) {
                     receive_tar_file(client_sock_sd);
@@ -226,8 +241,9 @@ int main(int argc, char *argv[]) {
                     printf("%s", server_response);
                     memset(server_response, 0, sizeof(server_response));
                 }
+                memset(&flag, 0, sizeof(flag));
             } else {
-                printf("\ncommand is not valid\n");
+                printf("\nCommand is not valid\n");
             }
         }
     }
@@ -274,6 +290,7 @@ void validate_fGets(char *cmd) {
         isCmdValid = 1;
     } else {
         isCmdValid = 0;
+        printf("Invalid Format, Usage: fgets file1 file2 file3 file4");
     }
 }
 
@@ -285,20 +302,29 @@ void validate_tarGets(char *cmd) {
         if (strcmp(flag, "-u") == 0) {
             if (size1 <= size2) {
                 isCmdValid = 1;
+                isUnzip = 1;
             } else {
                 isCmdValid = 0;
+                isUnzip = 0;
+                printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
             }
         } else {
             isCmdValid = 0;
+            isUnzip = 0;
+            printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
         }
     } else if (sscanf(cmd, "tarfgetz %d %d", &size1, &size2) == 2) {
         if (size1 <= size2 && size1 > 0 && size2 > 0) {
             isCmdValid = 1;
+            isUnzip = 0;
         } else {
             isCmdValid = 0;
+            isUnzip = 0;
+            printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
         }
     } else {
         isCmdValid = 0;
+        isUnzip = 0;
         printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
     }
 }
@@ -342,8 +368,6 @@ bool is_valid_date(const char *date) {
         }
     }
 
-    // Additional validation logic can be added here if needed
-
     return true;
 }
 
@@ -356,34 +380,69 @@ void validate_getDirf(char *cmd) {
             if (is_valid_date(date1) && is_valid_date(date2)) {
                 if (strcmp(date1, date2) <= 0) {
                     isCmdValid = 1;
+                    isUnzip = 1;
                 } else {
                     isCmdValid = 0;
+                    isUnzip = 0;
+                    printf("Invalid format, Usage: getdirf date1 date2 <-u>");
                 }
             } else {
                 isCmdValid = 0;
+                isUnzip = 0;
+                printf("Invalid format, Usage: getdirf date1 date2 <-u>");
             }
         } else {
             isCmdValid = 0;
-            printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
+            isUnzip = 0;
+            printf("Invalid format, Usage: getdirf date1 date2 <-u>");
         }
     } else if (sscanf(cmd, "getdirf %10s %10s", date1, date2) == 2) {
         if (is_valid_date(date1) && is_valid_date(date2)) {
             if (strcmp(date1, date2) <= 0) {
                 isCmdValid = 1;
+                isUnzip = 0;
             } else {
                 isCmdValid = 0;
+                isUnzip = 0;
+                printf("Invalid format, Usage: getdirf date1 date2 <-u>");
             }
         } else {
             isCmdValid = 0;
+            isUnzip = 0;
+            printf("Invalid format, Usage: getdirf date1 date2 <-u>");
         }
     } else {
         isCmdValid = 0;
-        printf("Invalid format, usage: tarfgetz size1 size2 <-u>");
+        isUnzip = 0;
+        printf("Invalid format, Usage: getdirf date1 date2 <-u>");
+    }
+}
+
+void validate_targzf(char *cmd) {
+    char input_exts[4][10]; // Make sure to provide appropriate size
+    char extension_list[4][10] = {"c", "txt", "pdf", "docx"};// Each extension needs its own array
+    if (substrExists(cmd, "-u") == 0) {
+        isUnzip = 1;
+    }
+    int exts = sscanf(cmd, "targzf %9s %9s %9s %9s", input_exts[0], input_exts[1], input_exts[2], input_exts[3]);
+    if (exts >= 1 && exts <= 4) {
+        for (int i = 0; i < exts; i++) {
+            if (strcmp(input_exts[i], extension_list[i]) == 0) {
+                isCmdValid = 1;
+            } else {
+                isCmdValid = 0;
+                isUnzip = 0;
+                printf("Invalid Format, Usage: targzf <extension list> <-u>");
+            }
+        }
+    } else {
+        isCmdValid = 0;
+        printf("Invalid Format, Usage: targzf <extension list> <-u>");
     }
 }
 
 // function to validate input cmds
-void validate_input_command(char *input_cmd) {
+void validate_input_cmd(char *input_cmd) {
     char *tempCmd = input_cmd;
     if (substrExists(tempCmd, "fgets")) {
         validate_fGets(input_cmd);
@@ -391,12 +450,12 @@ void validate_input_command(char *input_cmd) {
         validate_tarGets(tempCmd);
     } else if (substrExists(tempCmd, "filesrch")) {
         isCmdValid = 1;
-    } else if (substrExists(tempCmd, "targzf")) {
-        isCmdValid = 1;
     } else if (substrExists(tempCmd, "getdirf")) {
         validate_getDirf(input_cmd);
     } else if (substrExists(tempCmd, "quit")) {
         isCmdValid = 1;
+    } else if (substrExists(tempCmd, "targzf")) {
+        validate_targzf(tempCmd);
     } else {
         isCmdValid = 0;
     }
